@@ -1,0 +1,226 @@
+"use client";
+
+import { motion, AnimatePresence } from "framer-motion";
+import { Plus, Users, Award, Sparkles, Trash2, ShieldCheck, X } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { supabase } from "@/lib/supabase";
+
+export function TeamManagement() {
+  const [clans, setClans] = useState<any[]>([]);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isMemberPickerOpen, setIsMemberPickerOpen] = useState(false);
+  const [activeClanName, setActiveClanName] = useState<string | null>(null);
+  
+  const [newClan, setNewClan] = useState({ name: '', logo: null as string | null });
+  const [selectedInitialMembers, setSelectedInitialMembers] = useState<string[]>([]);
+  const [availableUsers, setAvailableUsers] = useState<any[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetchData();
+    const channel = supabase.channel('team-mgmt').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchData).subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, []);
+
+  const fetchData = async () => {
+    const { data: profiles } = await supabase.from('profiles').select('*').order('points', { ascending: false });
+    const { data: clansData } = await supabase.from('clans').select('*');
+
+    if (!profiles) return;
+
+    const teamGroups: any = {};
+    const colors = ["#9f4022", "#747440", "#344161", "#a9674d", "#d27440", "#6f8e7c"];
+    
+    profiles.forEach((p) => {
+        const teamName = p.team_name || 'Independent';
+        if (!teamGroups[teamName]) {
+            const clanInfo = clansData?.find(c => c.name === teamName);
+            teamGroups[teamName] = { 
+                id: teamName, 
+                name: teamName, 
+                members: 0, 
+                points: 0, 
+                logo: clanInfo?.logo_url || null,
+                memberList: [] as any[],
+                color: colors[Object.keys(teamGroups).length % colors.length],
+                bg: `${colors[Object.keys(teamGroups).length % colors.length]}10`
+            };
+        }
+        teamGroups[teamName].members += 1;
+        teamGroups[teamName].points += (p.points || 0);
+        teamGroups[teamName].memberList.push({ id: p.id, name: p.name, email: p.email });
+    });
+
+    setClans(Object.values(teamGroups));
+    setAvailableUsers(profiles.filter(p => !p.team_name || p.team_name === 'Independent'));
+  };
+
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => setNewClan(prev => ({ ...prev, logo: reader.result as string }));
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleInitialize = async () => {
+    if (!newClan.name.trim()) return;
+    try {
+        await supabase.from('clans').upsert({ name: newClan.name, logo_url: newClan.logo }, { onConflict: 'name' });
+        if (selectedInitialMembers.length > 0) {
+            await supabase.from('profiles').update({ team_name: newClan.name }).in('id', selectedInitialMembers);
+        }
+        alert(`Guild "${newClan.name}" initialized.`);
+        setIsModalOpen(false);
+        setNewClan({ name: '', logo: null });
+        setSelectedInitialMembers([]);
+        fetchData();
+    } catch(e) { console.error(e); }
+  };
+
+  const assignMember = async (userId: string) => {
+     if (!activeClanName) return;
+     const { error } = await supabase.from('profiles').update({ team_name: activeClanName }).eq('id', userId);
+     if (!error) { fetchData(); setIsMemberPickerOpen(false); }
+  };
+
+  const removeFromTeam = async (userId: string) => {
+    const { error } = await supabase.from('profiles').update({ team_name: 'Independent' }).eq('id', userId);
+    if (!error) fetchData();
+  };
+
+  const deleteClan = async (clanName: string) => {
+    if (clanName === 'Independent') return;
+    await supabase.from('profiles').update({ team_name: 'Independent' }).eq('team_name', clanName);
+    await supabase.from('clans').delete().eq('name', clanName);
+    fetchData();
+  };
+
+  const toggleInitialMember = (id: string) => {
+    setSelectedInitialMembers(prev => prev.includes(id) ? prev.filter(mid => mid !== id) : [...prev, id]);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '48px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '32px', borderBottom: '1px solid rgba(83, 55, 43, 0.05)' }}>
+        <div>
+           <h3 style={{ fontSize: '28px', fontFamily: "'Bodoni Moda', serif", color: '#53372b', fontWeight: '900', margin: 0, textTransform: 'uppercase' }}>Active Clans</h3>
+           <p style={{ color: 'rgba(83, 55, 43, 0.4)', fontSize: '14px', marginTop: '8px' }}>Manage team dynamics and distribute elite members.</p>
+        </div>
+        <button onClick={() => setIsModalOpen(true)} style={{ backgroundColor: '#9f4022', borderRadius: '12px', color: 'white', padding: '14px 24px', fontSize: '11px', fontWeight: 'bold', border: 'none', cursor: 'pointer', width: 'fit-content' }}>
+          <Plus size={16} style={{ marginRight: '8px', verticalAlign: 'middle' }} /> INITIALIZE NEW GUILD
+        </button>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px' }}>
+        {clans.filter(t => t.name !== 'Independent').map((team) => (
+          <motion.div key={team.id} className="premium-card">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
+                <div style={{ width: '56px', height: '56px', backgroundColor: team.color, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden' }}>
+                   {team.logo ? <img src={team.logo} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Users size={24} />}
+                </div>
+            </div>
+            <h4 style={{ color: '#53372b', fontFamily: "'Bodoni Moda', serif", fontSize: '20px', fontWeight: 'bold', margin: '0 0 24px 0', textTransform: 'uppercase' }}>{team.name}</h4>
+            <div style={{ display: 'flex', gap: '16px', marginBottom: '24px' }}>
+               <div style={{ background: 'var(--hb-beige)', padding: '8px 12px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold' }}>{team.members} Members</div>
+               <div style={{ background: 'var(--hb-beige)', padding: '8px 12px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold' }}>{team.points} Pts</div>
+            </div>
+
+            {/* Member List Display */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '32px', minHeight: '40px' }}>
+               {team.memberList?.map((m: any) => (
+                 <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,0,0,0.03)', padding: '6px 12px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.6)', position: 'relative' }}>
+                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: team.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white' }}>{m.name?.[0]}</div>
+                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                       <span style={{ fontWeight: 'bold' }}>{m.name}</span>
+                       <span style={{ fontSize: '8px', opacity: 0.5 }}>{m.email}</span>
+                    </div>
+                    {team.name !== 'Independent' && (
+                        <button 
+                            onClick={() => removeFromTeam(m.id)}
+                            style={{ 
+                                background: 'transparent', 
+                                border: 'none', 
+                                color: '#d27440', 
+                                cursor: 'pointer', 
+                                padding: '2px', 
+                                marginLeft: '4px',
+                                display: 'flex',
+                                alignItems: 'center'
+                            }}
+                        >
+                            <X size={10} />
+                        </button>
+                    )}
+                 </div>
+               ))}
+            </div>
+            <div style={{ paddingTop: '24px', borderTop: '1px solid rgba(83, 55, 43, 0.05)', display: 'flex', justifyContent: 'space-between' }}>
+               <button onClick={() => { setActiveClanName(team.name); setIsMemberPickerOpen(true); }} style={{ background: '#9f4022', borderRadius: '8px', padding: '10px 20px', border: 'none', color: 'white', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold' }}>+ ADD MEMBER</button>
+               <button onClick={() => deleteClan(team.name)} style={{ background: 'transparent', border: 'none', color: 'rgba(83, 55, 43, 0.2)', cursor: 'pointer' }}><Trash2 size={18} /></button>
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+      {isModalOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(83, 55, 43, 0.6)', backdropFilter: 'blur(8px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={{ background: 'var(--hb-cream)', borderRadius: '24px', padding: '32px', width: '100%', maxWidth: '500px', maxHeight: '90vh', overflowY: 'auto' }}>
+             <h3 style={{ fontSize: '28px', fontFamily: "'Bodoni Moda', serif", color: '#53372b', fontWeight: 'bold', textAlign: 'center', marginBottom: '32px' }}>INITIALIZE GUILD</h3>
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                   <div onClick={() => fileInputRef.current?.click()} style={{ width: '100px', height: '100px', borderRadius: '24px', background: '#fcfaf5', border: '2px dashed rgba(83, 55, 43, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
+                      {newClan.logo ? <img src={newClan.logo} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Sparkles size={32} color="rgba(83, 55, 43, 0.2)" />}
+                   </div>
+                   <input type="file" ref={fileInputRef} onChange={handleLogoUpload} hidden accept="image/*" />
+                </div>
+                <div>
+                   <label style={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase' }}>Guild Name</label>
+                   <input type="text" placeholder="e.g. Iron Wolves..." value={newClan.name} onChange={(e) => setNewClan(prev => ({ ...prev, name: e.target.value }))} style={{ width: '100%', padding: '16px', borderRadius: '16px', border: '1px solid rgba(83, 55, 43, 0.1)', marginTop: '8px' }} />
+                </div>
+                <div>
+                   <label style={{ fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase' }}>Select Founders</label>
+                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', marginTop: '12px', maxHeight: '180px', overflowY: 'auto' }}>
+                      {availableUsers.map(user => (
+                         <button key={user.id} onClick={() => toggleInitialMember(user.id)} style={{ padding: '12px', borderRadius: '12px', border: selectedInitialMembers.includes(user.id) ? '2px solid #9f4022' : '1px solid rgba(0,0,0,0.05)', backgroundColor: selectedInitialMembers.includes(user.id) ? 'rgba(159, 64, 34, 0.05)' : 'white', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                               <ShieldCheck size={14} color={selectedInitialMembers.includes(user.id) ? '#9f4022' : 'rgba(0,0,0,0.1)'} />
+                               <span style={{ fontSize: '12px', fontWeight: 'bold' }}>{user.name}</span>
+                            </div>
+                            <span style={{ fontSize: '10px', color: 'rgba(83, 55, 43, 0.4)', marginLeft: '22px' }}>{user.email}</span>
+                         </button>
+                      ))}
+                   </div>
+                </div>
+                <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
+                   <button onClick={() => setIsModalOpen(false)} style={{ flex: 1, padding: '16px', borderRadius: '16px', border: 'none', background: '#f5f2e9', cursor: 'pointer' }}>DISCARD</button>
+                   <button onClick={handleInitialize} style={{ flex: 2, padding: '16px', borderRadius: '16px', border: 'none', background: '#9f4022', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>INITIALIZE CLAN</button>
+                </div>
+             </div>
+          </motion.div>
+        </div>
+      )}
+
+      {isMemberPickerOpen && (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(83, 55, 43, 0.4)', backdropFilter: 'blur(12px)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+           <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} style={{ background: 'white', borderRadius: '32px', padding: '40px', width: '100%', maxWidth: '400px' }}>
+              <h3 style={{ fontSize: '24px', fontFamily: "'Bodoni Moda', serif", textAlign: 'center', marginBottom: '32px' }}>PICK MEMBER</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '400px', overflowY: 'auto' }}>
+                 {availableUsers.map(user => (
+                   <button key={user.id} onClick={() => assignMember(user.id)} style={{ padding: '16px', borderRadius: '16px', border: '1px solid rgba(83, 55, 43, 0.05)', background: '#fcfaf5', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                     <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#53372b', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px' }}>{user.name?.[0]}</div>
+                     <div style={{ display: 'flex', flexDirection: 'column' }}>
+                       <span style={{ fontWeight: 'bold', fontSize: '14px', color: '#53372b' }}>{user.name}</span>
+                       <span style={{ fontSize: '11px', color: 'rgba(83, 55, 43, 0.4)' }}>{user.email}</span>
+                     </div>
+                   </button>
+                 ))}
+              </div>
+              <button onClick={() => setIsMemberPickerOpen(false)} style={{ width: '100%', marginTop: '32px', padding: '16px', borderRadius: '16px', border: 'none', background: '#f5f2e9', cursor: 'pointer' }}>CLOSE</button>
+           </motion.div>
+        </div>
+      )}
+    </div>
+  );
+}
