@@ -8,6 +8,7 @@ import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
 
 const supabaseConfigured =
+  typeof process !== 'undefined' &&
   !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
   !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -17,15 +18,27 @@ export default function Home() {
   const [isAuthorized, setIsAuthorized] = useState(false);
 
   useEffect(() => {
+    console.log("[HB+ DEBUG] App bootstrapping...");
+    if (!supabaseConfigured) {
+      console.warn("[HB+ DEBUG] Supabase not configured. Keys missing from build/deployment.");
+      setIsLoading(false);
+      return;
+    }
+
     // Safety timeout — never hang on loading forever
-    const timeout = setTimeout(() => setIsLoading(false), 5000);
+    const timeout = setTimeout(() => {
+      console.warn("[HB+ DEBUG] Loading timeout reached (5s). Forcing render.");
+      setIsLoading(false);
+    }, 5000);
 
     // Check initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log("[HB+ DEBUG] Session verified:", !!session);
       clearTimeout(timeout);
       validateUser(session?.user ?? null);
       setIsLoading(false);
-    }).catch(() => {
+    }).catch((err) => {
+      console.error("[HB+ DEBUG] Auth check failed:", err);
       clearTimeout(timeout);
       setIsLoading(false);
     });
@@ -91,11 +104,11 @@ export default function Home() {
            >
              <div className="w-20 h-20 rounded-[32px] bg-white flex items-center justify-center text-[#9f4022] shadow-inner border border-[#EDDEC8]/30 mb-10 overflow-hidden relative">
                 <motion.div 
-                  animate={{ y: ["100%", "0%", "-100%"] }}
-                  transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                  className="absolute inset-0 bg-[#9f4022]/10"
+                   animate={{ y: ["100%", "0%", "-100%"] }}
+                   transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                   className="absolute inset-0 bg-[#9f4022]/10"
                 />
-                <span className="text-xl font- editorial font-black italic">HB+</span>
+                <span className="text-xl font-editorial font-black italic">HB+</span>
              </div>
              <h2 className="text-[10px] font-black text-[#53372b]/30 uppercase tracking-[0.5em] animate-pulse">Initializing Control Tower</h2>
            </motion.div>
