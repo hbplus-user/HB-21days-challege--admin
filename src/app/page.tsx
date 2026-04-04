@@ -7,15 +7,26 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
 
+const supabaseConfigured =
+  !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
+  !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
 export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthorized, setIsAuthorized] = useState(false);
 
   useEffect(() => {
+    // Safety timeout — never hang on loading forever
+    const timeout = setTimeout(() => setIsLoading(false), 5000);
+
     // Check initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
+      clearTimeout(timeout);
       validateUser(session?.user ?? null);
+      setIsLoading(false);
+    }).catch(() => {
+      clearTimeout(timeout);
       setIsLoading(false);
     });
 
@@ -24,7 +35,10 @@ export default function Home() {
       validateUser(session?.user ?? null);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const validateUser = async (user: User | null) => {
@@ -44,6 +58,27 @@ export default function Home() {
       setIsAuthorized(false);
     }
   };
+
+  // Show env config error banner if Supabase is not configured (e.g. Vercel without env vars)
+  if (!supabaseConfigured) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#fcfaf5', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px' }}>
+        <div style={{ background: 'white', borderRadius: '24px', padding: '48px', maxWidth: '540px', width: '100%', textAlign: 'center', boxShadow: '0 20px 60px rgba(0,0,0,0.08)', border: '1px solid rgba(159,64,34,0.1)' }}>
+          <div style={{ fontSize: '40px', marginBottom: '16px' }}>⚠️</div>
+          <h2 style={{ fontFamily: "'Bodoni Moda', serif", fontSize: '24px', color: '#9f4022', margin: '0 0 12px 0', textTransform: 'uppercase' }}>Configuration Required</h2>
+          <p style={{ color: '#53372b', opacity: 0.6, fontSize: '14px', lineHeight: '1.6', marginBottom: '24px' }}>
+            Supabase environment variables are not set. This admin panel requires database credentials to function.
+          </p>
+          <div style={{ background: '#fcfaf5', borderRadius: '12px', padding: '20px', textAlign: 'left', fontFamily: 'monospace', fontSize: '12px', color: '#53372b', marginBottom: '24px' }}>
+            <p style={{ margin: '0 0 8px 0', fontWeight: 'bold', color: '#9f4022' }}>Add to Vercel → Settings → Environment Variables:</p>
+            <p style={{ margin: '4px 0' }}>NEXT_PUBLIC_SUPABASE_URL = your-url</p>
+            <p style={{ margin: '4px 0' }}>NEXT_PUBLIC_SUPABASE_ANON_KEY = your-key</p>
+          </div>
+          <p style={{ fontSize: '11px', color: 'rgba(83,55,43,0.4)', margin: 0, fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.2em' }}>HB+ Fit Integrity Systems</p>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

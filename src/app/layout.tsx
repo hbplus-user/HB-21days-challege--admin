@@ -19,7 +19,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..900;1,6..96,400..900&family=Outfit:wght@100..900&display=swap" rel="stylesheet" />
       </head>
-      <body className="antialiased min-h-screen" suppressHydrationWarning>
+      <body className="antialiased" style={{ minHeight: '100vh', width: '100%', margin: 0, padding: 0 }} suppressHydrationWarning>
         {children}
       </body>
     </html>
