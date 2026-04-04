@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "HB+ Admin Control Tower | 21-Day Habit Challenge",
   description: "Premium wellness brand admin dashboard for managing 21-Day Habit Challenges.",
+  icons: {
+    icon: '/icon.png',
+  },
 };
 
 export default function RootLayout({
