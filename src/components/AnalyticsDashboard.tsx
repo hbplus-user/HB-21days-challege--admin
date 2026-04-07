@@ -16,6 +16,9 @@ import {
   Legend,
   Filler
 } from 'chart.js';
+import { supabase } from "@/lib/supabase";
+import { useState, useEffect } from "react";
+
 
 ChartJS.register(
   CategoryScale,
@@ -78,6 +81,30 @@ const completionData = {
 };
 
 export function AnalyticsDashboard() {
+  const [teamRankings, setTeamRankings] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchTeamData();
+  }, []);
+
+  const fetchTeamData = async () => {
+    const { data: profiles } = await supabase.from('profiles').select('team_name, points');
+    if (!profiles) return;
+
+    const rankings: any = {};
+    profiles.forEach(p => {
+        const team = p.team_name || 'Independent';
+        if (team === 'Independent') return;
+        if (!rankings[team]) {
+            rankings[team] = { name: team, points: 0, members: 0 };
+        }
+        rankings[team].points += (p.points || 0);
+        rankings[team].members += 1;
+    });
+
+    setTeamRankings(Object.values(rankings).sort((a: any, b: any) => b.points - a.points));
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '48px' }}>
       
@@ -152,6 +179,60 @@ export function AnalyticsDashboard() {
         </div>
 
       </div>
+
+      {/* Team Leaderboard Section */}
+      <div style={{ background: 'white', borderRadius: '32px', padding: '48px', border: '1px solid rgba(83, 55, 43, 0.05)', boxShadow: '0 20px 40px rgba(83, 55, 43, 0.03)' }}>
+         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '40px' }}>
+            <div>
+               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', color: '#9f4022', marginBottom: '8px' }}>
+                  <Award size={20} />
+                  <span style={{ fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.2em' }}>Competitive Matrix</span>
+               </div>
+               <h3 style={{ fontSize: '28px', fontFamily: "'Bodoni Moda', serif", color: '#53372b', fontWeight: 'bold', margin: 0 }}>Guild Performance Ranking</h3>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+               <p style={{ fontSize: '32px', fontWeight: 'bold', color: '#53372b', margin: 0 }}>{teamRankings.length}</p>
+               <p style={{ fontSize: '10px', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase', fontWeight: 'bold', margin: 0 }}>Active Guilds</p>
+            </div>
+         </div>
+
+         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+            {teamRankings.map((team, idx) => (
+               <motion.div 
+                 key={team.name}
+                 initial={{ opacity: 0, x: -20 }}
+                 animate={{ opacity: 1, x: 0 }}
+                 transition={{ delay: idx * 0.1 }}
+                 style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    padding: '24px 32px', 
+                    background: idx === 0 ? 'rgba(159, 64, 34, 0.03)' : '#fcfaf5', 
+                    borderRadius: '20px',
+                    border: idx === 0 ? '1px solid rgba(159, 64, 34, 0.1)' : '1px solid transparent'
+                 }}
+               >
+                  <div style={{ width: '40px', fontSize: '18px', fontWeight: '900', color: idx === 0 ? '#9f4022' : 'rgba(83, 55, 43, 0.2)', fontFamily: "'Bodoni Moda', serif" }}>
+                     {idx + 1 < 10 ? `0${idx + 1}` : idx + 1}
+                  </div>
+                  <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '20px' }}>
+                     <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: idx === 0 ? '#9f4022' : '#53372b', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' }}>
+                        <Users size={20} />
+                     </div>
+                     <div>
+                        <h4 style={{ fontSize: '18px', color: '#53372b', fontWeight: 'bold', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{team.name}</h4>
+                        <p style={{ fontSize: '11px', color: 'rgba(83, 55, 43, 0.4)', margin: 0 }}>{team.members} Active Operatives</p>
+                     </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                     <p style={{ fontSize: '20px', fontWeight: 'bold', color: '#53372b', margin: 0 }}>{team.points.toLocaleString()}</p>
+                     <p style={{ fontSize: '10px', color: '#9f4022', fontWeight: 'bold', textTransform: 'uppercase', margin: 0 }}>Collective Points</p>
+                  </div>
+               </motion.div>
+            ))}
+         </div>
+      </div>
     </div>
   );
 }
+

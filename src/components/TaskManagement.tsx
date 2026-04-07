@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Trash2, Calendar, GripVertical, Award, MessageSquareQuote, FileVideo, FileImage, FileText, LayoutList, Clock, Video } from "lucide-react";
+import { Plus, Trash2, Calendar, Check, GripVertical, Award, MessageSquareQuote, FileVideo, FileImage, FileText, LayoutList, Clock, Video, Zap, Camera } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -21,18 +21,40 @@ export function TaskManagement() {
   const [flashCards, setFlashCards] = useState<any[]>([]);
   const [tasks, setTasks] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [isBatchActionModalOpen, setIsBatchActionModalOpen] = useState(false);
+  const [batchActionType, setBatchActionType] = useState<'copy' | 'move'>('copy');
+  const [targetDay, setTargetDay] = useState(1);
 
   // Form States
   const [isAddingTask, setIsAddingTask] = useState(false);
-  const [newTaskData, setNewTaskData] = useState({ title: '', points: 15, video_url: '' });
+  const [newTaskData, setNewTaskData] = useState({ title: '', points: 15, video_url: null as string | null, proof_type: 'image' });
   const [taskFile, setTaskFile] = useState<File | null>(null);
   
   const [isAddingCard, setIsAddingCard] = useState(false);
-  const [newCardData, setNewCardData] = useState({ text: '', points: 50, video_url: '' });
+  const [newCardData, setNewCardData] = useState({ text: '', points: 50, video_url: null as string | null });
   const [cardFile, setCardFile] = useState<File | null>(null);
+  const [cardDeadline, setCardDeadline] = useState<string>(() => {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(23, 59, 0, 0);
+    return tomorrow.toISOString().slice(0, 16);
+  });
+  const [targetClientId, setTargetClientId] = useState<string | null>(null);
+  const [members, setMembers] = useState<any[]>([]);
 
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
   const [isUploading, setIsUploading] = useState(false);
+
+  // Direct Award State
+  const [isAwardingPoints, setIsAwardingPoints] = useState(false);
+  const [awardData, setAwardData] = useState({
+      userId: '',
+      points: 100,
+      reason: '',
+      isTask: false
+  });
+  const [awardFile, setAwardFile] = useState<File | null>(null);
 
   useEffect(() => {
     fetchData();
@@ -66,9 +88,11 @@ export function TaskManagement() {
 
     const { data: tasksData } = await supabase.from('tasks').select('*');
     const { data: cardsData } = await supabase.from('flashcards').select('*').order('created_at', { ascending: false });
+    const { data: membersData } = await supabase.from('profiles').select('id, name').order('name');
     
     if (tasksData) setTasks(tasksData);
     if (cardsData) setFlashCards(cardsData);
+    if (membersData) setMembers(membersData);
     setIsLoading(false);
   };
 
@@ -178,6 +202,8 @@ export function TaskManagement() {
         const uploadedUrl = await uploadFile(cardFile, 'card');
         if (!uploadedUrl) return; // Stop if upload failed
         videoUrl = uploadedUrl;
+    } else if (!videoUrl) {
+        videoUrl = null;
     }
 
     try {
@@ -185,7 +211,9 @@ export function TaskManagement() {
             text: newCardData.text, 
             points: newCardData.points, 
             video_url: videoUrl,
-            type: "challenge" 
+            type: "challenge",
+            deadline: new Date(cardDeadline).toISOString(),
+            target_user_id: targetClientId
         }]);
         
         if (error) {
@@ -194,7 +222,7 @@ export function TaskManagement() {
             return;
         }
 
-        setNewCardData({ text: '', points: 50, video_url: '' }); 
+        setNewCardData({ text: '', points: 50, video_url: null }); 
         setCardFile(null);
         setIsAddingCard(false); 
     } catch(e) {
@@ -210,6 +238,8 @@ export function TaskManagement() {
         const uploadedUrl = await uploadFile(taskFile, 'task');
         if (!uploadedUrl) return; // Stop if upload failed
         videoUrl = uploadedUrl;
+    } else if (!videoUrl) {
+        videoUrl = null;
     }
 
     const { error } = await supabase.from('tasks').insert([
@@ -217,14 +247,14 @@ export function TaskManagement() {
         title: newTaskData.title, 
         points: newTaskData.points, 
         video_url: videoUrl,
-        proof_type: 'image', 
+        proof_type: newTaskData.proof_type || 'image', 
         week: activeWeek,
         day: activeDay 
       }
     ]);
 
     if (!error) {
-      setNewTaskData({ title: '', points: 15, video_url: '' });
+      setNewTaskData({ title: '', points: 15, video_url: null, proof_type: 'image' });
       setTaskFile(null);
       setIsAddingTask(false);
     } else {
@@ -240,6 +270,95 @@ export function TaskManagement() {
   const deleteTask = async (id: string) => {
     if (!confirm("Are you sure? This will remove this protocol and ALL client submissions for it!")) return;
     await supabase.from('tasks').delete().eq('id', id);
+  };
+
+  const toggleTaskSelection = (id: string) => {
+    setSelectedTaskIds(prev => 
+      prev.includes(id) ? prev.filter(taskId => taskId !== id) : [...prev, id]
+    );
+  };
+
+  const handleBatchAction = async () => {
+    if (selectedTaskIds.length === 0) return;
+    
+    const targetWeek = Math.ceil(targetDay / 7);
+    const selectedTasks = tasks.filter(t => selectedTaskIds.includes(t.id));
+    
+    try {
+      if (batchActionType === 'copy') {
+        const tasksToInsert = selectedTasks.map(t => ({
+          title: t.title,
+          points: t.points,
+          video_url: t.video_url,
+          proof_type: t.proof_type,
+          day: targetDay,
+          week: targetWeek
+        }));
+        const { error } = await supabase.from('tasks').insert(tasksToInsert);
+        if (error) throw error;
+        alert(`Successfully copied ${selectedTaskIds.length} tasks to Day ${targetDay}`);
+      } else {
+        const { error } = await supabase.from('tasks')
+          .update({ day: targetDay, week: targetWeek })
+          .in('id', selectedTaskIds);
+        if (error) throw error;
+        alert(`Successfully moved ${selectedTaskIds.length} tasks to Day ${targetDay}`);
+      }
+      
+      setSelectedTaskIds([]);
+      setIsBatchActionModalOpen(false);
+      fetchData();
+    } catch (e: any) {
+      alert(`Batch action failed: ${e.message}`);
+    }
+  };
+
+  const handleDirectAward = async () => {
+    if (!awardData.userId || !awardData.points) {
+        alert("Please select a user and point value.");
+        return;
+    }
+    
+    if (awardData.isTask && !awardFile) {
+        alert("Please upload a photo proof for task assignments.");
+        return;
+    }
+
+    let proofUrl = null;
+    if (awardFile) {
+        const uploadedUrl = await uploadFile(awardFile, 'award');
+        if (!uploadedUrl) return;
+        proofUrl = uploadedUrl;
+    }
+
+    try {
+        // 1. Get current user points
+        const { data: profile, error: fetchErr } = await supabase
+            .from('profiles')
+            .select('points, name')
+            .eq('id', awardData.userId)
+            .single();
+        
+        if (fetchErr) throw fetchErr;
+
+        const newPoints = (profile.points || 0) + Number(awardData.points);
+
+        // 2. Update points
+        const { error: updateErr } = await supabase
+            .from('profiles')
+            .update({ points: newPoints })
+            .eq('id', awardData.userId);
+        
+        if (updateErr) throw updateErr;
+
+        alert(`Successfully awarded ${awardData.points} points to ${profile.name}!`);
+        setIsAwardingPoints(false);
+        setAwardData({ userId: '', points: 100, reason: '', isTask: false });
+        setAwardFile(null);
+        fetchData();
+    } catch (e: any) {
+        alert(`Award failed: ${e.message}`);
+    }
   };
 
   return (
@@ -261,9 +380,139 @@ export function TaskManagement() {
       <div>
          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px' }}>
             <MessageSquareQuote size={24} color="#9f4022" />
-            <h3 style={{ fontSize: '24px', fontFamily: "'Bodoni Moda', serif", color: '#53372b', fontWeight: '900', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Administrative Flash Cards</h3>
+            <h3 style={{ fontSize: '24px', fontFamily: "'Bodoni Moda', serif", color: '#53372b', fontWeight: '900', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Wildcard Challenges</h3>
          </div>
+         
+         <div style={{ 
+            background: '#3e2a1f', 
+            borderRadius: '24px', 
+            padding: '32px', 
+            marginBottom: '40px', 
+            boxShadow: '0 20px 40px rgba(0,0,0,0.15)',
+            border: '1px solid rgba(201, 157, 93, 0.1)',
+            display: 'grid',
+            gridTemplateColumns: '180px 1fr 180px',
+            alignItems: 'stretch',
+            gap: '32px'
+         }}>
+            {/* Left: Branding */}
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', borderRight: '1px solid rgba(255,255,255,0.05)', paddingRight: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                    <Zap size={14} color="#c99d5d" fill="#c99d5d" />
+                    <span style={{ fontSize: '9px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.2em', color: '#c99d5d' }}>Urgent Signal</span>
+                </div>
+                <h4 style={{ margin: 0, fontSize: '20px', fontFamily: "'Bodoni Moda', serif", fontStyle: 'italic', color: 'white', lineHeight: 1.2 }}>Quick Broadcast</h4>
+            </div>
+            
+            {/* Center: Message & Duration */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <textarea 
+                    id="system-broadcast-msg"
+                    placeholder="Broadcast an urgent message to all clients..."
+                    style={{ 
+                        width: '100%', 
+                        flex: 1,
+                        background: 'rgba(255,255,255,0.03)', 
+                        border: '1px solid rgba(255,255,255,0.1)', 
+                        borderRadius: '16px', 
+                        padding: '16px 20px', 
+                        color: 'white', 
+                        fontSize: '14px', 
+                        resize: 'none', 
+                        outline: 'none', 
+                        transition: 'all 0.3s',
+                        lineHeight: '1.5'
+                    }}
+                />
+                
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '9px', fontWeight: '900', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>Display For:</span>
+                    
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.05)', padding: '6px 14px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        <input 
+                            type="number" 
+                            id="broadcast-duration-val"
+                            defaultValue="1"
+                            min="1"
+                            style={{ 
+                                width: '35px', 
+                                background: 'transparent', 
+                                border: 'none', 
+                                color: '#c99d5d', 
+                                fontWeight: 'bold', 
+                                fontSize: '14px',
+                                outline: 'none'
+                            }}
+                        />
+                        <select 
+                            id="broadcast-duration-unit"
+                            style={{ 
+                                background: 'transparent', 
+                                border: 'none', 
+                                color: 'white', 
+                                fontSize: '10px', 
+                                fontWeight: 'bold', 
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                                outline: 'none',
+                                cursor: 'pointer'
+                            }}
+                        >
+                            <option value="1" style={{ color: 'black' }}>Minutes</option>
+                            <option value="60" style={{ color: 'black' }}>Hours</option>
+                        </select>
+                    </div>
+                    <span style={{ fontSize: '9px', color: 'rgba(255,255,255,0.25)', fontStyle: 'italic' }}>Auto-vanish after expiry.</span>
+                </div>
+            </div>
+            
+            {/* Right: Action */}
+            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'flex-end' }}>
+                <button 
+                onClick={async () => {
+                    const msg = (document.getElementById('system-broadcast-msg') as HTMLTextAreaElement).value;
+                    const val = parseInt((document.getElementById('broadcast-duration-val') as HTMLInputElement).value) || 1;
+                    const unit = parseInt((document.getElementById('broadcast-duration-unit') as HTMLSelectElement).value) || 1;
+                    const totalMins = val * unit;
+
+                    if (!msg.trim()) return;
+                    
+                    const { error } = await supabase.from('flashcards').insert([{ 
+                        text: msg, 
+                        type: 'alert', 
+                        points: 0,
+                        deadline: new Date(Date.now() + totalMins * 60000).toISOString()
+                    }]);
+                    
+                    if (!error) {
+                        (document.getElementById('system-broadcast-msg') as HTMLTextAreaElement).value = '';
+                        alert(`Signal transmitted! Active for ${val} ${unit === 1 ? 'minutes' : 'hours'}.`);
+                    } else {
+                        alert(`Broadcast error: ${error.message}`);
+                    }
+                }}
+                style={{ 
+                    padding: '16px 32px',
+                    background: '#c99d5d', 
+                    color: '#3e2a1f', 
+                    border: 'none', 
+                    borderRadius: '16px', 
+                    fontWeight: '900', 
+                    fontSize: '12px', 
+                    cursor: 'pointer', 
+                    textTransform: 'uppercase', 
+                    letterSpacing: '0.15em', 
+                    transition: 'all 0.3s',
+                    boxShadow: '0 8px 16px rgba(0,0,0,0.2)'
+                }}
+                >
+                Transmit
+                </button>
+            </div>
+         </div>
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '20px' }}>
+
             <AnimatePresence mode="popLayout">
               {flashCards.map((card, idx) => (
                 <motion.div
@@ -290,7 +539,7 @@ export function TaskManagement() {
                     </div>
                     <div style={{ flex: 1 }}>
                         <p style={{ margin: 0, fontSize: '15px', color: '#53372b', fontWeight: 'bold' }}>"{card.text}"</p>
-                        <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#9f4022', textTransform: 'uppercase', marginTop: '6px' }}>{card.points || 50} Points Challenge</div>
+                        <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#9f4022', textTransform: 'uppercase', marginTop: '6px' }}>{card.points || 50} Points Wildcard</div>
                     </div>
                     <button 
                         onClick={() => deleteFlashCard(card.id)}
@@ -325,7 +574,7 @@ export function TaskManagement() {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '24px' }}>
                     <textarea 
                         autoFocus
-                        placeholder="Type challenge broadcast message..."
+                        placeholder="Type wildcard challenge message..."
                         value={newCardData.text}
                         onChange={(e) => setNewCardData({...newCardData, text: e.target.value})}
                         style={{ width: '100%', border: 'none', outline: 'none', fontSize: '15px', color: '#53372b', fontWeight: 'bold', backgroundColor: 'transparent', resize: 'none', minHeight: '60px' }}
@@ -341,12 +590,37 @@ export function TaskManagement() {
                                 style={{ width: '60px', padding: '10px', borderRadius: '12px', border: '1px solid rgba(83, 55, 43, 0.05)', textAlign: 'center' }}
                             />
                         </div>
+
+                        {/* Targeted User Dropdown */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '10px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Target Client (Optional)</span>
+                            <select 
+                                value={targetClientId || ''}
+                                onChange={(e) => setTargetClientId(e.target.value || null)}
+                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid rgba(83, 55, 43, 0.05)', fontSize: '11px', fontWeight: 'bold', color: '#53372b', background: 'white' }}
+                            >
+                                <option value="">EVERYONE (Public Broadcast)</option>
+                                {members.map(m => (
+                                    <option key={m.id} value={m.id}>{m.name}</option>
+                                ))}
+                            </select>
+                        </div>
+
+                        {/* Deadline Input */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <span style={{ fontSize: '10px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.3)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Deadline</span>
+                            <input 
+                                type="datetime-local"
+                                value={cardDeadline}
+                                onChange={(e) => setCardDeadline(e.target.value)}
+                                style={{ padding: '10px', borderRadius: '12px', border: '1px solid rgba(83, 55, 43, 0.05)', fontSize: '11px', fontWeight: 'bold', color: '#53372b' }}
+                            />
+                        </div>
                         
                         <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                            <div style={{ position: 'relative', flex: 1 }}>
                                 <input 
                                     type="file" 
-                                    accept="video/*"
+                                    accept="video/*,image/*"
                                     onChange={(e) => {
                                       const f = e.target.files?.[0];
                                       if (f) validateAndSetFile(f, setCardFile);
@@ -359,9 +633,8 @@ export function TaskManagement() {
                                     htmlFor="card-video-upload"
                                     style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 16px', borderRadius: '12px', background: cardFile ? '#f0f0f0' : 'rgba(159, 64, 34, 0.05)', color: '#9f4022', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', border: '1px solid rgba(159, 64, 34, 0.1)' }}
                                 >
-                                    <Video size={14} /> {cardFile ? cardFile.name : "SELECT BROADCAST VIDEO"}
+                                    <Video size={14} /> {cardFile ? cardFile.name : "SELECT MEDIA (OPTIONAL)"}
                                 </label>
-                            </div>
                             <span style={{ fontSize: '9px', color: 'rgba(83,55,43,0.4)', fontWeight: 'bold', letterSpacing: '0.05em' }}>MAX 30 SEC · VID 2MB · IMG 1MB</span>
                         </div>
                     </div>
@@ -376,7 +649,7 @@ export function TaskManagement() {
                   <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                      <button onClick={() => setIsAddingCard(false)} style={{ fontSize: '10px', fontWeight: 'bold', border: 'none', background: 'transparent', color: 'rgba(83, 55, 43, 0.4)', cursor: 'pointer', padding: '8px' }}>CANCEL</button>
                      <button onClick={handleAddFlashCard} disabled={isUploading} style={{ fontSize: '10px', fontWeight: 'bold', border: 'none', background: '#9f4022', color: 'white', borderRadius: '8px', padding: '8px 16px', cursor: isUploading ? 'not-allowed' : 'pointer', opacity: isUploading ? 0.7 : 1 }}>
-                        {isUploading ? 'PREPARING...' : 'BROADCAST CHALLENGE'}
+                        {isUploading ? 'PREPARING...' : 'DEPLOY WILDCARD'}
                      </button>
                   </div>
                 </motion.div>
@@ -405,10 +678,139 @@ export function TaskManagement() {
                   cursor: 'pointer'
                 }}
               >
-                 <Plus size={16} /> BROADCAST NEW FLASH CARD
+                 <Plus size={16} /> INITIALIZE NEW WILDCARD
               </motion.button>
             )}
          </div>
+      </div>
+
+
+      {/* Direct Points Section */}
+      <div>
+         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px' }}>
+            <Award size={24} color="#9f4022" />
+            <h3 style={{ fontSize: '24px', fontFamily: "'Bodoni Moda', serif", color: '#53372b', fontWeight: '900', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Honor Awards & Manual Tasks</h3>
+         </div>
+
+         {!isAwardingPoints ? (
+             <motion.button 
+                whileHover={{ scale: 1.01 }}
+                whileTap={{ scale: 0.99 }}
+                onClick={() => setIsAwardingPoints(true)}
+                style={{ 
+                    width: '100%',
+                    padding: '24px',
+                    borderRadius: '20px',
+                    background: 'white',
+                    border: '1px solid rgba(83, 55, 43, 0.1)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '12px',
+                    color: '#9f4022',
+                    fontSize: '12px',
+                    fontWeight: '900',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.1em',
+                    cursor: 'pointer',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.03)'
+                }}
+             >
+                <Plus size={18} /> INITIALIZE MANUAL POINT GRANT
+             </motion.button>
+         ) : (
+            <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="premium-card"
+                style={{ padding: '32px', border: '2px solid #9f4022', background: '#fcfaf5' }}
+            >
+                <h4 style={{ margin: '0 0 24px 0', fontSize: '14px', fontWeight: '900', color: '#9f4022', textTransform: 'uppercase' }}>Direct Point Allocation</h4>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Target Client</label>
+                        <select 
+                            value={awardData.userId}
+                            onChange={(e) => setAwardData({...awardData, userId: e.target.value})}
+                            style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.05)', background: 'white', fontSize: '14px', color: '#53372b' }}
+                        >
+                            <option value="">-- SELECT CLIENT --</option>
+                            {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                        </select>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Point Value</label>
+                        <input 
+                            type="number" 
+                            value={awardData.points}
+                            onChange={(e) => setAwardData({...awardData, points: parseInt(e.target.value)})}
+                            style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', color: '#53372b' }}
+                        />
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Allocation Type</label>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button 
+                                onClick={() => setAwardData({...awardData, isTask: false})}
+                                style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid', borderColor: !awardData.isTask ? '#9f4022' : 'rgba(0,0,0,0.05)', background: !awardData.isTask ? '#9f4022' : 'white', color: !awardData.isTask ? 'white' : '#53372b', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+                            >
+                                NOT A TASK
+                            </button>
+                            <button 
+                                onClick={() => setAwardData({...awardData, isTask: true})}
+                                style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid', borderColor: awardData.isTask ? '#9f4022' : 'rgba(0,0,0,0.05)', background: awardData.isTask ? '#9f4022' : 'white', color: awardData.isTask ? 'white' : '#53372b', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+                            >
+                                TASK CREDIT
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', gridColumn: '1 / -1' }}>
+                        <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Reason / Memo</label>
+                        <input 
+                            type="text" 
+                            placeholder="e.g. Exceptional community contribution or offsite activity check..."
+                            value={awardData.reason}
+                            onChange={(e) => setAwardData({...awardData, reason: e.target.value})}
+                            style={{ padding: '12px', borderRadius: '12px', border: '1px solid rgba(0,0,0,0.05)', fontSize: '14px', color: '#53372b' }}
+                        />
+                    </div>
+
+                    {awardData.isTask && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', gridColumn: '1 / -1' }}>
+                            <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Task Proof Photo (Mandatory for Tasks)</label>
+                            <input 
+                                type="file" 
+                                accept="image/*"
+                                id="award-file-upload"
+                                onChange={(e) => setAwardFile(e.target.files?.[0] || null)}
+                                style={{ display: 'none' }}
+                            />
+                            <label 
+                                htmlFor="award-file-upload"
+                                style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', borderRadius: '12px', border: '1px dashed #9f4022', background: awardFile ? '#e8ecef' : 'white', cursor: 'pointer', fontSize: '13px', color: '#53372b' }}
+                            >
+                                <Camera size={16} /> {awardFile ? awardFile.name : "ATTACH PROOF IMAGE"}
+                            </label>
+                        </div>
+                    )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '32px' }}>
+                    <button onClick={() => setIsAwardingPoints(false)} style={{ background: 'transparent', border: 'none', color: 'rgba(83, 55, 43, 0.4)', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer', padding: '10px 20px' }}>CANCEL</button>
+                    <button 
+                        onClick={handleDirectAward} 
+                        disabled={isUploading}
+                        style={{ background: '#9f4022', border: 'none', color: 'white', fontWeight: '900', fontSize: '12px', cursor: 'pointer', padding: '12px 32px', borderRadius: '12px', boxShadow: '0 8px 16px rgba(159, 64, 34, 0.2)', textTransform: 'uppercase' }}
+                    >
+                        {isUploading ? 'UPLOADING PROOF...' : 'GRANT POINTS'}
+                    </button>
+                </div>
+            </motion.div>
+         )}
       </div>
 
       {/* Task Stack Section */}
@@ -479,11 +881,30 @@ export function TaskManagement() {
                        padding: '20px',
                        display: 'flex',
                        flexDirection: 'column',
-                       gap: '16px'
+                       gap: '16px',
+                       border: selectedTaskIds.includes(task.id) ? '2px solid #9f4022' : '1px solid rgba(198, 198, 198, 0.2)',
+                       boxShadow: selectedTaskIds.includes(task.id) ? '0 8px 24px rgba(159, 64, 34, 0.12)' : '0 4px 12px rgba(83, 55, 43, 0.05)'
                      }}
                    >
                      <div className="flex flex-col md:flex-row md:items-center gap-6">
                          <div className="flex items-center gap-6 flex-1">
+                            <div 
+                               onClick={() => toggleTaskSelection(task.id)}
+                               style={{ 
+                                 width: '24px', 
+                                 height: '24px', 
+                                 borderRadius: '6px', 
+                                 border: '2px solid #9f4022', 
+                                 display: 'flex', 
+                                 alignItems: 'center', 
+                                 justifyContent: 'center', 
+                                 cursor: 'pointer',
+                                 backgroundColor: selectedTaskIds.includes(task.id) ? '#9f4022' : 'transparent',
+                                 transition: 'all 0.2s'
+                               }}
+                            >
+                              {selectedTaskIds.includes(task.id) && <Check size={14} color="white" />}
+                            </div>
                             <GripVertical size={20} color="rgba(83, 55, 43, 0.15)" />
                             <div>
                                <p style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#53372b' }}>{task.title}</p>
@@ -534,11 +955,11 @@ export function TaskManagement() {
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                     <h4 style={{ fontSize: '14px', fontWeight: '900', color: '#9f4022', textTransform: 'uppercase', margin: 0 }}>Create Protocol Expansion</h4>
+                     <h4 style={{ fontSize: '14px', fontWeight: '900', color: '#9f4022', textTransform: 'uppercase', margin: 0 }}>Deploy Wildcard Protocol</h4>
                      <select 
                         onChange={(e) => {
                           const template = protocolTemplates.find(t => t.title === e.target.value);
-                          if (template) setNewTaskData({ ...newTaskData, title: template.title, points: template.points });
+                          if (template) setNewTaskData({ ...newTaskData, title: template.title, points: template.points, proof_type: template.proof === 'photo' ? 'image' : template.proof });
                         }}
                         style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid rgba(83, 55, 43, 0.1)', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }}
                       >
@@ -567,13 +988,13 @@ export function TaskManagement() {
                             style={{ padding: '12px', borderRadius: '10px', border: '1px solid rgba(83, 55, 43, 0.1)', fontSize: '14px', color: '#53372b' }}
                          />
                       </div>
-                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', gridColumn: '1 / -1' }}>
-                        <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Protocol Video</label>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', gridColumn: '1 / -1' }}>
+                        <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Protocol Media (Optional)</label>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
                               <input 
                                  type="file" 
-                                 accept="video/*"
+                                 accept="video/*,image/*"
                                  onChange={(e) => {
                                    const f = e.target.files?.[0];
                                    if (f) validateAndSetFile(f, setTaskFile);
@@ -582,11 +1003,11 @@ export function TaskManagement() {
                                  style={{ display: 'none' }}
                                  id="task-video-upload"
                               />
-                              <label 
+                               <label 
                                  htmlFor="task-video-upload"
                                  style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px', padding: '12px', borderRadius: '10px', background: taskFile ? '#e8ecef' : 'white', border: '1px solid rgba(83, 55, 43, 0.1)', fontSize: '14px', color: '#53372b', cursor: 'pointer' }}
                               >
-                                  <Video size={16} /> {taskFile ? taskFile.name : "SELECT VIDEO FROM DEVICE"}
+                                  <Video size={16} /> {taskFile ? taskFile.name : "SELECT MEDIA FROM DEVICE (OPTIONAL)"}
                               </label>
                               <div style={{ padding: '12px 20px', background: '#f0f0f0', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.5 }}>
                                  <FileImage size={14} /> <span style={{ fontSize: '10px', fontWeight: 'bold' }}>IMAGE PROOF ONLY</span>
@@ -599,7 +1020,7 @@ export function TaskManagement() {
                                 <div style={{ width: `${uploadProgress['task']}%`, height: '100%', background: '#9f4022', transition: 'width 0.3s' }} />
                             </div>
                         )}
-                     </div>
+                      </div>
                   </div>
 
                   <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
@@ -638,8 +1059,147 @@ export function TaskManagement() {
                  <Plus size={16} /> ADD NEW PROTOCOL TASK
               </motion.button>
             )}
-         </div>
-      </div>
+          </div>
+
+          {/* Batch Action Floating Toolbar */}
+          <AnimatePresence>
+            {selectedTaskIds.length > 0 && (
+              <motion.div
+                initial={{ y: 100, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: 100, opacity: 0 }}
+                style={{
+                  position: 'fixed',
+                  bottom: '40px',
+                  left: '50%',
+                  transform: 'translateX(-50%)',
+                  zIndex: 1000,
+                  background: '#3e2a1f',
+                  padding: '16px 32px',
+                  borderRadius: '24px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '24px',
+                  boxShadow: '0 20px 50px rgba(0,0,0,0.3)',
+                  border: '1px solid rgba(201, 157, 93, 0.2)'
+                }}
+              >
+                <div style={{ color: 'white', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ backgroundColor: '#9f4022', color: 'white', padding: '4px 10px', borderRadius: '8px', fontSize: '14px', fontWeight: 'bold' }}>{selectedTaskIds.length}</div>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tasks Selected</span>
+                </div>
+                
+                <div style={{ width: '1px', height: '24px', background: 'rgba(255,255,255,0.1)' }} />
+                
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button 
+                    onClick={() => { setBatchActionType('copy'); setIsBatchActionModalOpen(true); }}
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', padding: '10px 20px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: 'pointer' }}
+                  >
+                    Copy to Day...
+                  </button>
+                  <button 
+                    onClick={() => { setBatchActionType('move'); setIsBatchActionModalOpen(true); }}
+                    style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', padding: '10px 20px', borderRadius: '12px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em', cursor: 'pointer' }}
+                  >
+                    Move to Day...
+                  </button>
+                  <button 
+                    onClick={() => setSelectedTaskIds([])}
+                    style={{ background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.4)', padding: '10px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', cursor: 'pointer' }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Batch Action Modal */}
+          <AnimatePresence>
+            {isBatchActionModalOpen && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                style={{
+                  position: 'fixed',
+                  inset: 0,
+                  zIndex: 2000,
+                  background: 'rgba(0,0,0,0.8)',
+                  backdropFilter: 'blur(8px)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '24px'
+                }}
+              >
+                <motion.div
+                  initial={{ scale: 0.95, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  exit={{ scale: 0.95, y: 20 }}
+                  style={{
+                    background: 'white',
+                    width: '100%',
+                    maxWidth: '430px',
+                    borderRadius: '32px',
+                    padding: '40px',
+                    textAlign: 'center',
+                    boxShadow: '0 30px 60px rgba(0,0,0,0.3)'
+                  }}
+                >
+                  <div style={{ width: '60px', height: '60px', backgroundColor: 'rgba(159, 64, 34, 0.1)', color: '#9f4022', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+                    <Calendar size={28} />
+                  </div>
+                  
+                  <h3 style={{ fontSize: '24px', fontFamily: "'Bodoni Moda', serif", color: '#53372b', fontWeight: '900', marginBottom: '12px', textTransform: 'uppercase' }}>
+                    {batchActionType === 'copy' ? 'Batch Copy' : 'Batch Move'}
+                  </h3>
+                  <p style={{ color: 'rgba(83, 55, 43, 0.5)', fontSize: '14px', marginBottom: '32px' }}>
+                    Select the destination day for your {selectedTaskIds.length} selected tasks.
+                  </p>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px', marginBottom: '40px' }}>
+                    {Array.from({ length: 21 }, (_, i) => i + 1).map(day => (
+                      <button
+                        key={day}
+                        onClick={() => setTargetDay(day)}
+                        style={{
+                          padding: '10px 0',
+                          borderRadius: '8px',
+                          border: '1px solid rgba(0,0,0,0.05)',
+                          backgroundColor: targetDay === day ? '#9f4022' : '#fcfaf5',
+                          color: targetDay === day ? 'white' : '#53372b',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                      >
+                        D{day}
+                      </button>
+                    ))}
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: '12px' }}>
+                    <button 
+                      onClick={() => setIsBatchActionModalOpen(false)}
+                      style={{ flex: 1, padding: '16px', borderRadius: '16px', border: '1px solid rgba(0,0,0,0.1)', background: 'transparent', color: 'rgba(83, 55, 43, 0.4)', fontWeight: 'bold', fontSize: '12px', cursor: 'pointer' }}
+                    >
+                      CANCEL
+                    </button>
+                    <button 
+                      onClick={handleBatchAction}
+                      style={{ flex: 1, padding: '16px', borderRadius: '16px', border: 'none', background: '#9f4022', color: 'white', fontWeight: '900', fontSize: '12px', cursor: 'pointer', boxShadow: '0 8px 16px rgba(159, 64, 34, 0.2)', textTransform: 'uppercase', letterSpacing: '0.1em' }}
+                    >
+                      CONFIRM
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+       </div>
     </div>
   );
 }

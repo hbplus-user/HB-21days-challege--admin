@@ -48,7 +48,7 @@ export function TeamManagement() {
         }
         teamGroups[teamName].members += 1;
         teamGroups[teamName].points += (p.points || 0);
-        teamGroups[teamName].memberList.push({ id: p.id, name: p.name, email: p.email });
+        teamGroups[teamName].memberList.push({ id: p.id, name: p.name, email: p.email, role: p.role });
     });
 
     setClans(Object.values(teamGroups));
@@ -101,6 +101,15 @@ export function TeamManagement() {
     setSelectedInitialMembers(prev => prev.includes(id) ? prev.filter(mid => mid !== id) : [...prev, id]);
   };
 
+  const makeLeader = async (userId: string, teamName: string) => {
+    // First, remove leader role from everyone else in this team
+    await supabase.from('profiles').update({ role: 'member' }).eq('team_name', teamName);
+    // Then set this user as leader
+    const { error } = await supabase.from('profiles').update({ role: 'leader' }).eq('id', userId);
+    if (!error) fetchData();
+  };
+
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '48px' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '32px', borderBottom: '1px solid rgba(83, 55, 43, 0.05)' }}>
@@ -129,32 +138,44 @@ export function TeamManagement() {
 
             {/* Member List Display */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '32px', minHeight: '40px' }}>
-               {team.memberList?.map((m: any) => (
-                 <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,0,0,0.03)', padding: '6px 12px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.6)', position: 'relative' }}>
-                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: team.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white' }}>{m.name?.[0]}</div>
-                    <div style={{ display: 'flex', flexDirection: 'column' }}>
-                       <span style={{ fontWeight: 'bold' }}>{m.name}</span>
-                       <span style={{ fontSize: '8px', opacity: 0.5 }}>{m.email}</span>
-                    </div>
-                    {team.name !== 'Independent' && (
-                        <button 
-                            onClick={() => removeFromTeam(m.id)}
-                            style={{ 
-                                background: 'transparent', 
-                                border: 'none', 
-                                color: '#d27440', 
-                                cursor: 'pointer', 
-                                padding: '2px', 
-                                marginLeft: '4px',
-                                display: 'flex',
-                                alignItems: 'center'
-                            }}
-                        >
-                            <X size={10} />
-                        </button>
-                    )}
-                 </div>
-               ))}
+                {team.memberList?.map((m: any) => (
+                  <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: m.role === 'leader' ? 'rgba(159, 64, 34, 0.1)' : 'rgba(0,0,0,0.03)', padding: '6px 12px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.6)', position: 'relative', border: m.role === 'leader' ? '1px solid rgba(159, 64, 34, 0.3)' : 'none' }}>
+                     <div style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: team.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white' }}>
+                        {m.role === 'leader' ? <Award size={10} /> : m.name?.[0]}
+                     </div>
+                     <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontWeight: 'bold', color: m.role === 'leader' ? '#9f4022' : 'inherit' }}>{m.name} {m.role === 'leader' && "(Captain)"}</span>
+                        <span style={{ fontSize: '8px', opacity: 0.5 }}>{m.email}</span>
+                     </div>
+                     <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto' }}>
+                        {m.role !== 'leader' && team.name !== 'Independent' && (
+                            <button 
+                                onClick={() => makeLeader(m.id, team.name)}
+                                title="Promote to Leader"
+                                style={{ background: 'transparent', border: 'none', color: '#6f8e7c', cursor: 'pointer', padding: '2px' }}
+                            >
+                                <ShieldCheck size={12} />
+                            </button>
+                        )}
+                        {team.name !== 'Independent' && (
+                            <button 
+                                onClick={() => removeFromTeam(m.id)}
+                                style={{ 
+                                    background: 'transparent', 
+                                    border: 'none', 
+                                    color: '#d27440', 
+                                    cursor: 'pointer', 
+                                    padding: '2px', 
+                                    display: 'flex',
+                                    alignItems: 'center'
+                                }}
+                            >
+                                <X size={10} />
+                            </button>
+                        )}
+                     </div>
+                  </div>
+                ))}
             </div>
             <div style={{ paddingTop: '24px', borderTop: '1px solid rgba(83, 55, 43, 0.05)', display: 'flex', justifyContent: 'space-between' }}>
                <button onClick={() => { setActiveClanName(team.name); setIsMemberPickerOpen(true); }} style={{ background: '#9f4022', borderRadius: '8px', padding: '10px 20px', border: 'none', color: 'white', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold' }}>+ ADD MEMBER</button>
