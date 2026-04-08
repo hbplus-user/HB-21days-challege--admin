@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Users, Award, Sparkles, Trash2, ShieldCheck, X } from "lucide-react";
+import { Plus, Users, Award, Sparkles, Trash2, ShieldCheck, X, Edit2, Check } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -14,6 +14,8 @@ export function TeamManagement() {
   const [newClan, setNewClan] = useState({ name: '', logo: null as string | null });
   const [selectedInitialMembers, setSelectedInitialMembers] = useState<string[]>([]);
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
+  const [editingClanName, setEditingClanName] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -109,6 +111,29 @@ export function TeamManagement() {
     if (!error) fetchData();
   };
 
+  const handleRenameClan = async (oldName: string) => {
+    if (!renameValue.trim() || renameValue === oldName) {
+        setEditingClanName(null);
+        return;
+    }
+    
+    try {
+        // 1. Update clans table
+        const { error: clanErr } = await supabase.from('clans').update({ name: renameValue }).eq('name', oldName);
+        if (clanErr) throw clanErr;
+
+        // 2. Update profiles table
+        const { error: profileErr } = await supabase.from('profiles').update({ team_name: renameValue }).eq('team_name', oldName);
+        if (profileErr) throw profileErr;
+        
+        setEditingClanName(null);
+        fetchData();
+    } catch (e: any) {
+        console.error(e);
+        alert(`Rename failed: ${e.message}`);
+    }
+  };
+
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '48px' }}>
@@ -130,7 +155,33 @@ export function TeamManagement() {
                    {team.logo ? <img src={team.logo} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Users size={24} />}
                 </div>
             </div>
-            <h4 style={{ color: '#53372b', fontFamily: "'Bodoni Moda', serif", fontSize: '20px', fontWeight: 'bold', margin: '0 0 24px 0', textTransform: 'uppercase' }}>{team.name}</h4>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
+                {editingClanName === team.name ? (
+                    <div style={{ display: 'flex', gap: '8px', width: '100%' }}>
+                        <input 
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleRenameClan(team.name)}
+                            style={{ flex: 1, padding: '10px 16px', borderRadius: '12px', border: '1px solid #9f4022', fontSize: '14px', outline: 'none' }}
+                            autoFocus
+                        />
+                        <button onClick={() => handleRenameClan(team.name)} style={{ width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#6f8e7c', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer' }}><Check size={16}/></button>
+                        <button onClick={() => setEditingClanName(null)} style={{ width: '40px', height: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#d27440', color: 'white', border: 'none', borderRadius: '12px', cursor: 'pointer' }}><X size={16}/></button>
+                    </div>
+                ) : (
+                    <>
+                        <h4 style={{ color: '#53372b', fontFamily: "'Bodoni Moda', serif", fontSize: '20px', fontWeight: 'bold', margin: 0, textTransform: 'uppercase' }}>{team.name}</h4>
+                        <button 
+                            onClick={() => { setEditingClanName(team.name); setRenameValue(team.name); }}
+                            style={{ background: 'transparent', border: 'none', color: 'rgba(83, 55, 43, 0.2)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', transition: 'color 0.2s' }}
+                            onMouseOver={(e) => e.currentTarget.style.color = '#9f4022'}
+                            onMouseOut={(e) => e.currentTarget.style.color = 'rgba(83, 55, 43, 0.2)'}
+                        >
+                            <Edit2 size={16} />
+                        </button>
+                    </>
+                )}
+            </div>
             <div style={{ display: 'flex', gap: '16px', marginBottom: '24px' }}>
                <div style={{ background: 'var(--hb-beige)', padding: '8px 12px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold' }}>{team.members} Members</div>
                <div style={{ background: 'var(--hb-beige)', padding: '8px 12px', borderRadius: '10px', fontSize: '10px', fontWeight: 'bold' }}>{team.points} Pts</div>
