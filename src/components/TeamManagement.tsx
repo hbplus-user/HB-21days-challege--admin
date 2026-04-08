@@ -173,11 +173,11 @@ export function TeamManagement() {
                         <h4 style={{ color: '#53372b', fontFamily: "'Bodoni Moda', serif", fontSize: '20px', fontWeight: 'bold', margin: 0, textTransform: 'uppercase' }}>{team.name}</h4>
                         <button 
                             onClick={() => { setEditingClanName(team.name); setRenameValue(team.name); }}
-                            style={{ background: 'transparent', border: 'none', color: 'rgba(83, 55, 43, 0.2)', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center', transition: 'color 0.2s' }}
-                            onMouseOver={(e) => e.currentTarget.style.color = '#9f4022'}
-                            onMouseOut={(e) => e.currentTarget.style.color = 'rgba(83, 55, 43, 0.2)'}
+                            style={{ background: 'rgba(83, 55, 43, 0.05)', border: 'none', color: 'rgba(83, 55, 43, 0.6)', cursor: 'pointer', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', transition: 'all 0.2s' }}
+                            onMouseOver={(e) => { e.currentTarget.style.color = '#9f4022'; e.currentTarget.style.background = 'rgba(159, 64, 34, 0.1)'; }}
+                            onMouseOut={(e) => { e.currentTarget.style.color = 'rgba(83, 55, 43, 0.6)'; e.currentTarget.style.background = 'rgba(83, 55, 43, 0.05)'; }}
                         >
-                            <Edit2 size={16} />
+                            <Edit2 size={14} />
                         </button>
                     </>
                 )}
