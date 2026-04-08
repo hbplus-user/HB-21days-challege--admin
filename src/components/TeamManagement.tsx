@@ -137,43 +137,85 @@ export function TeamManagement() {
             </div>
 
             {/* Member List Display */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '32px', minHeight: '40px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginBottom: '32px' }}>
                 {team.memberList?.map((m: any) => (
-                  <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: m.role === 'captain' ? 'rgba(159, 64, 34, 0.1)' : 'rgba(0,0,0,0.03)', padding: '6px 12px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.6)', position: 'relative', border: m.role === 'captain' ? '1px solid rgba(159, 64, 34, 0.3)' : 'none' }}>
-                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: team.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white' }}>
-                        {m.role === 'captain' ? <Award size={10} /> : m.name?.[0]}
-                     </div>
-                     <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <span style={{ fontWeight: 'bold', color: m.role === 'captain' ? '#9f4022' : 'inherit' }}>{m.name} {m.role === 'captain' && "(Captain)"}</span>
-                        <span style={{ fontSize: '8px', opacity: 0.5 }}>{m.email}</span>
-                     </div>
-                     <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto' }}>
-                        {m.role !== 'captain' && team.name !== 'Independent' && (
+                  <div key={m.id} style={{ 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'space-between',
+                    background: m.role === 'captain' ? 'rgba(159, 64, 34, 0.08)' : 'rgba(0,0,0,0.02)', 
+                    padding: '12px 16px', 
+                    borderRadius: '12px',
+                    border: m.role === 'captain' ? '1.5px solid rgba(159, 64, 34, 0.2)' : '1px solid rgba(0,0,0,0.05)',
+                    transition: 'all 0.2s ease'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                        <div style={{ 
+                            width: '32px', 
+                            height: '32px', 
+                            borderRadius: '50%', 
+                            backgroundColor: m.role === 'captain' ? '#9f4022' : team.color, 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center', 
+                            fontSize: '12px', 
+                            color: 'white',
+                            fontWeight: 'bold'
+                        }}>
+                            {m.role === 'captain' ? <Award size={16} /> : m.name?.[0]}
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                            <span style={{ 
+                                fontSize: '13px', 
+                                fontWeight: 'bold', 
+                                color: m.role === 'captain' ? '#9f4022' : '#53372b' 
+                            }}>
+                                {m.name} {m.role === 'captain' && <span style={{ fontSize: '10px', marginLeft: '4px' }}>(Captain)</span>}
+                            </span>
+                            <span style={{ fontSize: '10px', color: 'rgba(83, 55, 43, 0.4)' }}>{m.email}</span>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        {m.role !== 'captain' && (
                             <button 
                                 onClick={() => makeCaptain(m.id, team.name)}
-                                title="Promote to Captain"
-                                style={{ background: 'transparent', border: 'none', color: '#6f8e7c', cursor: 'pointer', padding: '2px' }}
-                            >
-                                <ShieldCheck size={12} />
-                            </button>
-                        )}
-                        {team.name !== 'Independent' && (
-                            <button 
-                                onClick={() => removeFromTeam(m.id)}
                                 style={{ 
-                                    background: 'transparent', 
+                                    background: 'rgba(111, 142, 124, 0.1)', 
                                     border: 'none', 
-                                    color: '#d27440', 
+                                    color: '#6f8e7c', 
                                     cursor: 'pointer', 
-                                    padding: '2px', 
+                                    padding: '6px 10px',
+                                    borderRadius: '8px',
+                                    fontSize: '9px',
+                                    fontWeight: '900',
                                     display: 'flex',
-                                    alignItems: 'center'
+                                    alignItems: 'center',
+                                    gap: '4px',
+                                    textTransform: 'uppercase'
                                 }}
                             >
-                                <X size={10} />
+                                <ShieldCheck size={12} />
+                                MAKE CAPTAIN
                             </button>
                         )}
-                     </div>
+                        <button 
+                            onClick={() => removeFromTeam(m.id)}
+                            style={{ 
+                                background: 'rgba(210, 116, 64, 0.1)', 
+                                border: 'none', 
+                                color: '#d27440', 
+                                cursor: 'pointer', 
+                                padding: '6px',
+                                borderRadius: '8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center'
+                            }}
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
                   </div>
                 ))}
             </div>

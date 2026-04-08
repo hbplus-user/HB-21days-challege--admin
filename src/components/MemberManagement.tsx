@@ -62,6 +62,22 @@ export function MemberManagement() {
     }
   };
 
+  const makeCaptain = async (member: any) => {
+    if (!member.team_name || member.team_name === 'Independent') {
+        alert("Member must be in a team to become a captain.");
+        return;
+    }
+    
+    // First, remove captain role from everyone else in this team
+    await supabase.from('profiles').update({ role: 'member' }).eq('team_name', member.team_name);
+    // Then set this user as captain
+    const { error } = await supabase.from('profiles').update({ role: 'captain' }).eq('id', member.id);
+    if (!error) {
+        alert(`${member.name} is now the Captain of ${member.team_name}`);
+        fetchMembers();
+    }
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !editingId) return;
@@ -251,8 +267,30 @@ export function MemberManagement() {
                </div>
 
                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid rgba(83, 55, 43, 0.05)', paddingTop: '16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span style={{ fontSize: '10px', fontWeight: '900', color: isDeactivated ? 'rgba(159, 64, 34, 0.4)' : '#9f4022', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{member.team_name || 'Independent'}</span>
+                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <span style={{ fontSize: '10px', fontWeight: '900', color: isDeactivated ? 'rgba(159, 64, 34, 0.4)' : '#9f4022', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{member.team_name || 'Independent'}</span>
+                        {member.team_name && member.team_name !== 'Independent' && member.role !== 'captain' && !isDeactivated && (
+                            <button 
+                                onClick={() => makeCaptain(member)}
+                                style={{ 
+                                    background: 'rgba(111, 142, 124, 0.1)', 
+                                    border: 'none', 
+                                    color: '#6f8e7c', 
+                                    cursor: 'pointer', 
+                                    padding: '4px 8px',
+                                    borderRadius: '6px',
+                                    fontSize: '9px',
+                                    fontWeight: 'bold',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                }}
+                            >
+                                <Award size={10} /> PROMOTE TO CAPTAIN
+                            </button>
+                        )}
+                    </div>
                     <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: 'rgba(0,0,0,0.1)' }} />
                     <span style={{ fontSize: '10px', color: 'rgba(83, 55, 43, 0.4)', fontWeight: 'bold' }}>{member.points} PTS</span>
                   </div>
