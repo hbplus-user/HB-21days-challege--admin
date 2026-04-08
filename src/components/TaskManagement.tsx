@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Trash2, Calendar, Check, GripVertical, Award, MessageSquareQuote, FileVideo, FileImage, FileText, LayoutList, Clock, Video, Zap, Camera } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
+import imageCompression from 'browser-image-compression';
 
 const protocolTemplates = [
   { title: "Mindful Morning Flow", points: 15, proof: "video" },
@@ -139,8 +140,25 @@ export function TaskManagement() {
     setIsUploading(true);
     setUploadProgress(prev => ({ ...prev, [key]: 10 }));
     
+    let fileToUpload = file;
+
+    // --- Image Compression Protocol ---
+    if (file.type.startsWith('image/')) {
+        const options = {
+            maxSizeMB: 0.1, // Admins get slightly higher quality (100KB)
+            maxWidthOrHeight: 1600,
+            useWebWorker: true
+        };
+        try {
+            fileToUpload = await imageCompression(file, options);
+            console.log(`[Admin] Compressed image from ${(file.size / 1024).toFixed(2)}KB to ${(fileToUpload.size / 1024).toFixed(2)}KB`);
+        } catch (e) {
+            console.error('Compression failed', e);
+        }
+    }
+
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', fileToUpload);
     formData.append('fileName', `${Date.now()}-${file.name}`);
 
     try {
