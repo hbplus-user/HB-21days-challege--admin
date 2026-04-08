@@ -138,7 +138,7 @@ export function TeamManagement() {
   const handleUpdateTeamLogo = async (teamName: string, file: File) => {
     try {
         const fName = `clans/${teamName}-${Date.now()}`;
-        const { error: uE } = await supabase.storage.from('proofs').upload(fName, file);
+        const { error: uE } = await supabase.storage.from('proofs').upload(fName, file, { upsert: true });
         if (uE) throw uE;
 
         const fUrl = supabase.storage.from('proofs').getPublicUrl(fName).data.publicUrl;
