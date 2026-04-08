@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { UserCheck, UserX, Search, ShieldCheck, Mail, ShieldAlert, Trash2, Edit2, Check, X, Camera, UploadCloud } from "lucide-react";
+import { UserCheck, UserX, Search, ShieldCheck, Mail, ShieldAlert, Trash2, Edit2, Check, X, Camera, UploadCloud, Award } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -219,8 +219,9 @@ export function MemberManagement() {
                     ) : (
                         <div>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                             <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: isDeactivated ? 'rgba(83, 55, 43, 0.5)' : '#53372b' }}>
+                             <h4 style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: isDeactivated ? 'rgba(83, 55, 43, 0.5)' : '#53372b', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                 {member.name}
+                                {member.role === 'captain' && <Award size={14} color="#9f4022" />}
                              </h4>
                              {isDeactivated && (
                                 <span style={{ background: '#d27440', color: 'white', fontSize: '8px', fontWeight: '900', padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>DISQUALIFIED</span>

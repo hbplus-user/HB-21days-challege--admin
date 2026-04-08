@@ -101,11 +101,11 @@ export function TeamManagement() {
     setSelectedInitialMembers(prev => prev.includes(id) ? prev.filter(mid => mid !== id) : [...prev, id]);
   };
 
-  const makeLeader = async (userId: string, teamName: string) => {
-    // First, remove leader role from everyone else in this team
+  const makeCaptain = async (userId: string, teamName: string) => {
+    // First, remove captain role from everyone else in this team
     await supabase.from('profiles').update({ role: 'member' }).eq('team_name', teamName);
-    // Then set this user as leader
-    const { error } = await supabase.from('profiles').update({ role: 'leader' }).eq('id', userId);
+    // Then set this user as captain
+    const { error } = await supabase.from('profiles').update({ role: 'captain' }).eq('id', userId);
     if (!error) fetchData();
   };
 
@@ -139,19 +139,19 @@ export function TeamManagement() {
             {/* Member List Display */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '32px', minHeight: '40px' }}>
                 {team.memberList?.map((m: any) => (
-                  <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: m.role === 'leader' ? 'rgba(159, 64, 34, 0.1)' : 'rgba(0,0,0,0.03)', padding: '6px 12px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.6)', position: 'relative', border: m.role === 'leader' ? '1px solid rgba(159, 64, 34, 0.3)' : 'none' }}>
-                     <div style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: team.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white' }}>
-                        {m.role === 'leader' ? <Award size={10} /> : m.name?.[0]}
+                  <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: m.role === 'captain' ? 'rgba(159, 64, 34, 0.1)' : 'rgba(0,0,0,0.03)', padding: '6px 12px', borderRadius: '8px', fontSize: '10px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.6)', position: 'relative', border: m.role === 'captain' ? '1px solid rgba(159, 64, 34, 0.3)' : 'none' }}>
+                    <div style={{ width: '16px', height: '16px', borderRadius: '50%', backgroundColor: team.color, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '7px', color: 'white' }}>
+                        {m.role === 'captain' ? <Award size={10} /> : m.name?.[0]}
                      </div>
                      <div style={{ display: 'flex', flexDirection: 'column' }}>
-                        <span style={{ fontWeight: 'bold', color: m.role === 'leader' ? '#9f4022' : 'inherit' }}>{m.name} {m.role === 'leader' && "(Captain)"}</span>
+                        <span style={{ fontWeight: 'bold', color: m.role === 'captain' ? '#9f4022' : 'inherit' }}>{m.name} {m.role === 'captain' && "(Captain)"}</span>
                         <span style={{ fontSize: '8px', opacity: 0.5 }}>{m.email}</span>
                      </div>
                      <div style={{ display: 'flex', gap: '4px', marginLeft: 'auto' }}>
-                        {m.role !== 'leader' && team.name !== 'Independent' && (
+                        {m.role !== 'captain' && team.name !== 'Independent' && (
                             <button 
-                                onClick={() => makeLeader(m.id, team.name)}
-                                title="Promote to Leader"
+                                onClick={() => makeCaptain(m.id, team.name)}
+                                title="Promote to Captain"
                                 style={{ background: 'transparent', border: 'none', color: '#6f8e7c', cursor: 'pointer', padding: '2px' }}
                             >
                                 <ShieldCheck size={12} />
