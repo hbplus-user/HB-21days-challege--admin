@@ -11,7 +11,7 @@ export function TeamManagement() {
   const [isMemberPickerOpen, setIsMemberPickerOpen] = useState(false);
   const [activeClanName, setActiveClanName] = useState<string | null>(null);
   
-  const [newClan, setNewClan] = useState({ name: '', logo: null as string | null });
+  const [newClan, setNewClan] = useState({ name: '', logo_url: null as string | null });
   const [selectedInitialMembers, setSelectedInitialMembers] = useState<string[]>([]);
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [editingClanName, setEditingClanName] = useState<string | null>(null);
@@ -42,7 +42,7 @@ export function TeamManagement() {
                 name: teamName, 
                 members: 0, 
                 points: 0, 
-                logo: clanInfo?.logo_url || null,
+                logo_url: clanInfo?.logo_url || null,
                 memberList: [] as any[],
                 color: colors[Object.keys(teamGroups).length % colors.length],
                 bg: `${colors[Object.keys(teamGroups).length % colors.length]}10`
@@ -61,7 +61,7 @@ export function TeamManagement() {
     const file = e.target.files?.[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => setNewClan(prev => ({ ...prev, logo: reader.result as string }));
+      reader.onloadend = () => setNewClan(prev => ({ ...prev, logo_url: reader.result as string }));
       reader.readAsDataURL(file);
     }
   };
@@ -69,13 +69,13 @@ export function TeamManagement() {
   const handleInitialize = async () => {
     if (!newClan.name.trim()) return;
     try {
-        await supabase.from('clans').upsert({ name: newClan.name, logo_url: newClan.logo }, { onConflict: 'name' });
+        await supabase.from('clans').upsert({ name: newClan.name, logo_url: newClan.logo_url }, { onConflict: 'name' });
         if (selectedInitialMembers.length > 0) {
             await supabase.from('profiles').update({ team_name: newClan.name }).in('id', selectedInitialMembers);
         }
         alert(`Guild "${newClan.name}" initialized.`);
         setIsModalOpen(false);
-        setNewClan({ name: '', logo: null });
+        setNewClan({ name: '', logo_url: null });
         setSelectedInitialMembers([]);
         fetchData();
     } catch(e) { console.error(e); }
@@ -142,7 +142,7 @@ export function TeamManagement() {
         if (uE) throw uE;
 
         const fUrl = supabase.storage.from('proofs').getPublicUrl(fName).data.publicUrl;
-        const { error } = await supabase.from('clans').update({ logo: fUrl }).eq('name', teamName);
+        const { error } = await supabase.from('clans').update({ logo_url: fUrl }).eq('name', teamName);
         if (error) throw error;
         
         fetchData();
@@ -170,7 +170,7 @@ export function TeamManagement() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
                 <div style={{ position: 'relative' }}>
                     <div style={{ width: '56px', height: '56px', backgroundColor: team.color, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden' }}>
-                       {team.logo ? <img src={team.logo} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Users size={24} />}
+                       {team.logo_url ? <img src={team.logo_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Users size={24} />}
                     </div>
                     <button 
                         onClick={() => {
@@ -321,7 +321,7 @@ export function TeamManagement() {
              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 <div style={{ display: 'flex', justifyContent: 'center' }}>
                    <div onClick={() => fileInputRef.current?.click()} style={{ width: '100px', height: '100px', borderRadius: '24px', background: '#fcfaf5', border: '2px dashed rgba(83, 55, 43, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
-                      {newClan.logo ? <img src={newClan.logo} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Sparkles size={32} color="rgba(83, 55, 43, 0.2)" />}
+                      {newClan.logo_url ? <img src={newClan.logo_url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Sparkles size={32} color="rgba(83, 55, 43, 0.2)" />}
                    </div>
                    <input type="file" ref={fileInputRef} onChange={handleLogoUpload} hidden accept="image/*" />
                 </div>
