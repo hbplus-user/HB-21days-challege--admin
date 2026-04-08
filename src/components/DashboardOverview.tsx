@@ -50,10 +50,12 @@ export function DashboardOverview() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'challenge_settings' }, fetchStats)
       .subscribe();
 
+    const interval = setInterval(fetchStats, 20000); // 20s backup
     return () => {
       supabase.removeChannel(channel);
       supabase.removeChannel(subChannel);
       supabase.removeChannel(profChannel);
+      clearInterval(interval);
     };
   }, []);
 

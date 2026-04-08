@@ -16,6 +16,7 @@ function ApprovalsQueue() {
   const [submissions, setSubmissions] = useState<any[]>([]);
   const [processed, setProcessed] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [retryStates, setRetryStates] = useState<{ [id: string]: string }>({});
 
   useEffect(() => {
     fetchSubmissions();
@@ -31,20 +32,11 @@ function ApprovalsQueue() {
     setIsLoading(false);
   };
 
-  const handleStatusUpdate = async (subId: string, status: 'approved' | 'rejected' | 'retry', userId: string, pts: number = 0) => {
+  const handleStatusUpdate = async (subId: string, status: 'approved' | 'retry', userId: string, pts: number = 0, comment?: string) => {
     try {
-        let comment = null;
-        if (status === 'retry') {
-            comment = prompt("Instruction for Re-upload? (e.g. Blurry photo)");
-            if (!comment) return;
-        } else if (status === 'rejected') {
-            if (!confirm("Are you sure? This is a PERMANENT REJECT and they cannot resubmit.")) return;
-            comment = prompt("Why was this permanently rejected?");
-        }
-
         const { error: subErr } = await supabase.from('submissions').update({ 
             status, 
-            rejection_comment: comment 
+            rejection_comment: comment || null
         }).eq('id', subId);
         
         if (subErr) throw subErr;
@@ -53,6 +45,9 @@ function ApprovalsQueue() {
             const { data: profile } = await supabase.from('profiles').select('points').eq('id', userId).single();
             await supabase.from('profiles').update({ points: (profile?.points || 0) + pts }).eq('id', userId);
         }
+
+        // Clear retry input for this submission
+        setRetryStates(prev => { const n = { ...prev }; delete n[subId]; return n; });
         fetchSubmissions();
     } catch (e: any) {
         console.error('Approval Error:', e);
@@ -113,25 +108,50 @@ function ApprovalsQueue() {
                  </div>
                  <div style={{ fontSize: '10px', color: 'rgba(0,0,0,0.3)' }}>{new Date(sub.created_at).toLocaleTimeString()}</div>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px' }}>
-                   <button 
-                    onClick={() => handleStatusUpdate(sub.id, 'approved', sub.profiles?.id, sub.tasks?.points || sub.flashcards?.points || 0)} 
-                    style={{ background: '#9f4022', color: 'white', border: 'none', padding: '8px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    Approve
-                  </button>
-                  <button 
-                    onClick={() => handleStatusUpdate(sub.id, 'retry', sub.profiles?.id)} 
-                    style={{ background: '#eee', border: 'none', padding: '8px', borderRadius: '8px', fontSize: '11px', cursor: 'pointer' }}
-                  >
-                    Try Again
-                  </button>
-                  <button 
-                    onClick={() => handleStatusUpdate(sub.id, 'rejected', sub.profiles?.id)} 
-                    style={{ background: '#f8d7da', color: '#721c24', border: 'none', padding: '8px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    Reject
-                  </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {retryStates[sub.id] !== undefined ? (
+                  // Try Again: show inline comment input
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <textarea
+                      autoFocus
+                      placeholder="Enter instruction for client (e.g. Blurry photo, show full body)..."
+                      value={retryStates[sub.id]}
+                      onChange={(e) => setRetryStates(prev => ({ ...prev, [sub.id]: e.target.value }))}
+                      style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid rgba(159, 64, 34, 0.2)', fontSize: '12px', resize: 'none', minHeight: '70px', fontFamily: 'inherit', color: '#53372b', boxSizing: 'border-box' }}
+                    />
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <button
+                        onClick={() => setRetryStates(prev => { const n = { ...prev }; delete n[sub.id]; return n; })}
+                        style={{ background: '#eee', border: 'none', padding: '8px', borderRadius: '8px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => handleStatusUpdate(sub.id, 'retry', sub.profiles?.id, 0, retryStates[sub.id])}
+                        disabled={!retryStates[sub.id]?.trim()}
+                        style={{ background: retryStates[sub.id]?.trim() ? '#c99d5d' : '#eee', color: retryStates[sub.id]?.trim() ? 'white' : '#aaa', border: 'none', padding: '8px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: retryStates[sub.id]?.trim() ? 'pointer' : 'default' }}
+                      >
+                        Send Instruction
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  // Default: Approve + Try Again buttons
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    <button 
+                      onClick={() => handleStatusUpdate(sub.id, 'approved', sub.profiles?.id, sub.tasks?.points || sub.flashcards?.points || 0)} 
+                      style={{ background: '#9f4022', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
+                    >
+                      ✓ Approve
+                    </button>
+                    <button 
+                      onClick={() => setRetryStates(prev => ({ ...prev, [sub.id]: '' }))}
+                      style={{ background: '#eee', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '11px', cursor: 'pointer', fontWeight: 'bold' }}
+                    >
+                      ↩ Try Again
+                    </button>
+                  </div>
+                )}
               </div>
             </motion.div>
           ))}

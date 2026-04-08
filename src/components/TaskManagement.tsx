@@ -29,11 +29,11 @@ export function TaskManagement() {
 
   // Form States
   const [isAddingTask, setIsAddingTask] = useState(false);
-  const [newTaskData, setNewTaskData] = useState({ title: '', points: 15, video_url: null as string | null, proof_type: 'image' });
+  const [newTaskData, setNewTaskData] = useState({ title: '', description: '', points: 15, video_url: null as string | null, proof_type: 'image', proof_mode: 'both' });
   const [taskFile, setTaskFile] = useState<File | null>(null);
   
   const [isAddingCard, setIsAddingCard] = useState(false);
-  const [newCardData, setNewCardData] = useState({ text: '', points: 50, video_url: null as string | null });
+  const [newCardData, setNewCardData] = useState({ text: '', description: '', points: 50, video_url: null as string | null, proof_mode: 'both' });
   const [cardFile, setCardFile] = useState<File | null>(null);
   const [cardDeadline, setCardDeadline] = useState<string>(() => {
     const tomorrow = new Date();
@@ -63,10 +63,11 @@ export function TaskManagement() {
     // Real-time synchronization
     const tasksChannel = supabase.channel('tm-tasks').on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, fetchData).subscribe();
     const flashcardsChannel = supabase.channel('tm-flash').on('postgres_changes', { event: '*', schema: 'public', table: 'flashcards' }, fetchData).subscribe();
-
+    const interval = setInterval(fetchData, 20000); // 20s safety backup
     return () => {
         supabase.removeChannel(tasksChannel);
         supabase.removeChannel(flashcardsChannel);
+        clearInterval(interval);
     };
   }, []);
 
@@ -227,8 +228,10 @@ export function TaskManagement() {
     try {
         const { error } = await supabase.from('flashcards').insert([{ 
             text: newCardData.text, 
+            description: newCardData.description,
             points: newCardData.points, 
             video_url: videoUrl,
+            proof_mode: newCardData.proof_mode || 'both',
             type: "challenge",
             deadline: new Date(cardDeadline).toISOString(),
             target_user_id: targetClientId
@@ -240,7 +243,7 @@ export function TaskManagement() {
             return;
         }
 
-        setNewCardData({ text: '', points: 50, video_url: null }); 
+        setNewCardData({ text: '', description: '', points: 50, video_url: null, proof_mode: 'both' }); 
         setCardFile(null);
         setIsAddingCard(false); 
     } catch(e) {
@@ -263,16 +266,18 @@ export function TaskManagement() {
     const { error } = await supabase.from('tasks').insert([
       { 
         title: newTaskData.title, 
+        description: newTaskData.description,
         points: newTaskData.points, 
         video_url: videoUrl,
         proof_type: newTaskData.proof_type || 'image', 
+        proof_mode: newTaskData.proof_mode || 'both',
         week: activeWeek,
         day: activeDay 
       }
     ]);
 
     if (!error) {
-      setNewTaskData({ title: '', points: 15, video_url: null, proof_type: 'image' });
+      setNewTaskData({ title: '', description: '', points: 15, video_url: null, proof_type: 'image', proof_mode: 'both' });
       setTaskFile(null);
       setIsAddingTask(false);
     } else {
@@ -368,6 +373,15 @@ export function TaskManagement() {
             .eq('id', awardData.userId);
         
         if (updateErr) throw updateErr;
+
+        // 3. Log award for Daily/Weekly tracking
+        await supabase.from('manual_awards').insert({
+            user_id: awardData.userId,
+            points: Number(awardData.points),
+            reason: awardData.reason || 'Admin Award',
+            day: activeDay,
+            week: activeWeek
+        });
 
         alert(`Successfully awarded ${awardData.points} points to ${profile.name}!`);
         setIsAwardingPoints(false);
@@ -557,6 +571,7 @@ export function TaskManagement() {
                     </div>
                     <div style={{ flex: 1 }}>
                         <p style={{ margin: 0, fontSize: '15px', color: '#53372b', fontWeight: 'bold' }}>"{card.text}"</p>
+                        {card.description && <p style={{ margin: '4px 0 0 0', fontSize: '11px', color: 'rgba(83, 55, 43, 0.6)' }}>{card.description}</p>}
                         <div style={{ fontSize: '9px', fontWeight: 'bold', color: '#9f4022', textTransform: 'uppercase', marginTop: '6px' }}>{card.points || 50} Points Wildcard</div>
                     </div>
                     <button 
@@ -597,6 +612,16 @@ export function TaskManagement() {
                         onChange={(e) => setNewCardData({...newCardData, text: e.target.value})}
                         style={{ width: '100%', border: 'none', outline: 'none', fontSize: '15px', color: '#53372b', fontWeight: 'bold', backgroundColor: 'transparent', resize: 'none', minHeight: '60px' }}
                     />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Challenge Comment (Optional)</label>
+                        <input 
+                            type="text" 
+                            placeholder="Add a comment or inner instructions..."
+                            value={newCardData.description}
+                            onChange={(e) => setNewCardData({...newCardData, description: e.target.value})}
+                            style={{ padding: '10px', borderRadius: '12px', border: '1px solid rgba(83, 55, 43, 0.05)', fontSize: '13px', color: '#53372b' }}
+                        />
+                    </div>
                     
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'center' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -635,6 +660,40 @@ export function TaskManagement() {
                             />
                         </div>
                         
+
+                        {/* Proof Mode Selector */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%', marginTop: '4px' }}>
+                            <span style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Proof Submission Mode</span>
+                            <div style={{ display: 'flex', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(159, 64, 34, 0.15)', width: 'fit-content' }}>
+                                {(['capture', 'upload', 'both', 'checkbox'] as const).map((mode) => (
+                                    <button
+                                        key={mode}
+                                        onClick={() => setNewCardData({ ...newCardData, proof_mode: mode })}
+                                        style={{
+                                            padding: '8px 16px',
+                                            fontSize: '9px',
+                                            fontWeight: '900',
+                                            textTransform: 'uppercase',
+                                            letterSpacing: '0.08em',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            transition: 'all 0.2s',
+                                            background: newCardData.proof_mode === mode ? '#9f4022' : 'rgba(159, 64, 34, 0.04)',
+                                            color: newCardData.proof_mode === mode ? 'white' : 'rgba(83, 55, 43, 0.5)',
+                                        }}
+                                    >
+                                        {mode === 'capture' ? '📷 Capture' : mode === 'upload' ? '⬆ Upload' : mode === 'checkbox' ? '☑ Checkbox' : '✦ Both'}
+                                    </button>
+                                ))}
+                            </div>
+                            <span style={{ fontSize: '9px', color: 'rgba(83,55,43,0.35)', fontWeight: '600' }}>
+                                {newCardData.proof_mode === 'capture' && 'Client must use camera — no gallery access'}
+                                {newCardData.proof_mode === 'upload' && 'Client can upload any saved photo or file'}
+                                {newCardData.proof_mode === 'both' && 'Client can capture or upload — their choice'}
+                                {newCardData.proof_mode === 'checkbox' && 'NO PHOTO: Client clicks a checkbox for INSTANT approval'}
+                            </span>
+                        </div>
+
                         <div style={{ flex: 1, minWidth: '200px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                                 <input 
                                     type="file" 
@@ -926,9 +985,13 @@ export function TaskManagement() {
                             <GripVertical size={20} color="rgba(83, 55, 43, 0.15)" />
                             <div>
                                <p style={{ margin: 0, fontSize: '16px', fontWeight: 'bold', color: '#53372b' }}>{task.title}</p>
+                               {task.description && <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'rgba(83, 55, 43, 0.6)' }}>{task.description}</p>}
                                <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
                                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>
                                      <Clock size={12} /> Blueprint Task · Day {task.day}
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '9px', fontWeight: 'bold', color: '#9f4022', textTransform: 'uppercase' }}>
+                                     <Camera size={12} /> Mode: {task.proof_mode || 'both'}
                                   </div>
                                </div>
                             </div>
@@ -998,6 +1061,16 @@ export function TaskManagement() {
                         />
                      </div>
                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Task Comment (Optional)</label>
+                        <input 
+                           type="text" 
+                           placeholder="Add inner details or comments..." 
+                           value={newTaskData.description}
+                           onChange={(e) => setNewTaskData({...newTaskData, description: e.target.value})}
+                           style={{ padding: '12px', borderRadius: '10px', border: '1px solid rgba(83, 55, 43, 0.1)', fontSize: '14px', color: '#53372b', background: 'var(--hb-cream)' }}
+                        />
+                     </div>
+                     <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                          <label style={{ fontSize: '9px', fontWeight: 'bold', color: 'rgba(83, 55, 43, 0.4)', textTransform: 'uppercase' }}>Points</label>
                          <input 
                             type="number" 
@@ -1027,9 +1100,32 @@ export function TaskManagement() {
                               >
                                   <Video size={16} /> {taskFile ? taskFile.name : "SELECT MEDIA FROM DEVICE (OPTIONAL)"}
                               </label>
-                              <div style={{ padding: '12px 20px', background: '#f0f0f0', borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.5 }}>
-                                 <FileImage size={14} /> <span style={{ fontSize: '10px', fontWeight: 'bold' }}>IMAGE PROOF ONLY</span>
-                              </div>
+                              <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button 
+                                    onClick={() => setNewTaskData({...newTaskData, proof_mode: 'capture'})}
+                                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid', borderColor: newTaskData.proof_mode === 'capture' ? '#9f4022' : 'rgba(83, 55, 43, 0.05)', background: newTaskData.proof_mode === 'capture' ? '#9f4022' : 'white', color: newTaskData.proof_mode === 'capture' ? 'white' : '#53372b', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }}
+                                  >
+                                    CAPTURE
+                                  </button>
+                                  <button 
+                                    onClick={() => setNewTaskData({...newTaskData, proof_mode: 'upload'})}
+                                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid', borderColor: newTaskData.proof_mode === 'upload' ? '#9f4022' : 'rgba(83, 55, 43, 0.05)', background: newTaskData.proof_mode === 'upload' ? '#9f4022' : 'white', color: newTaskData.proof_mode === 'upload' ? 'white' : '#53372b', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }}
+                                  >
+                                    UPLOAD
+                                  </button>
+                                  <button 
+                                    onClick={() => setNewTaskData({...newTaskData, proof_mode: 'both'})}
+                                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid', borderColor: newTaskData.proof_mode === 'both' ? '#9f4022' : 'rgba(83, 55, 43, 0.05)', background: newTaskData.proof_mode === 'both' ? '#9f4022' : 'white', color: newTaskData.proof_mode === 'both' ? 'white' : '#53372b', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }}
+                                  >
+                                    BOTH
+                                  </button>
+                                  <button 
+                                    onClick={() => setNewTaskData({...newTaskData, proof_mode: 'checkbox'})}
+                                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: '1px solid', borderColor: newTaskData.proof_mode === 'checkbox' ? '#9f4022' : 'rgba(83, 55, 43, 0.05)', background: newTaskData.proof_mode === 'checkbox' ? '#9f4022' : 'white', color: newTaskData.proof_mode === 'checkbox' ? 'white' : '#53372b', fontSize: '10px', fontWeight: 'bold', cursor: 'pointer' }}
+                                  >
+                                    CHECKBOX
+                                  </button>
+                               </div>
                             </div>
                             <span style={{ fontSize: '9px', color: 'rgba(83,55,43,0.4)', fontWeight: 'bold', letterSpacing: '0.05em', paddingLeft: '2px' }}>MAX 30 SECONDS · VID 2MB · IMG 1MB</span>
                          </div>

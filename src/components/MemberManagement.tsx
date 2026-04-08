@@ -16,7 +16,11 @@ export function MemberManagement() {
   useEffect(() => {
     fetchMembers();
     const sub = supabase.channel('member-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchMembers).subscribe();
-    return () => { supabase.removeChannel(sub); };
+    const interval = setInterval(fetchMembers, 20000); // 20s backup
+    return () => { 
+        supabase.removeChannel(sub); 
+        clearInterval(interval);
+    };
   }, []);
 
   const fetchMembers = async () => {
@@ -31,10 +35,19 @@ export function MemberManagement() {
   };
 
   const deleteMember = async (id: string, name: string) => {
-    if (!confirm(`Are you absolutely sure you want to PERMANENTLY DELETE ${name}? This will remove all their submissions and progress.`)) return;
-    const { error } = await supabase.from('profiles').delete().eq('id', id);
-    if (!error) fetchMembers();
-    else alert(`Error: ${error.message}`);
+    if (!confirm(`Are you absolutely sure you want to PERMANENTLY DELETE ${name}? This will remove their Account, Submissions, Manual Awards, and all progress.`)) return;
+    
+    // Call the "Super Function" we just created in SQL
+    // This will delete them from Auth, which then cascades to everything else.
+    const { error } = await supabase.rpc('admin_delete_user', { target_user_id: id });
+
+    if (!error) {
+        alert("Operation Successful: User and all associated data have been permanently erased.");
+        fetchMembers();
+    } else {
+        console.error("Delete error:", error);
+        alert(`Error: ${error.message}. Make sure you have run the SQL script for 'admin_delete_user' in Supabase.`);
+    }
   };
 
   const startEditing = (member: any) => {

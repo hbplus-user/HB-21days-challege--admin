@@ -85,6 +85,16 @@ export function AnalyticsDashboard() {
 
   useEffect(() => {
     fetchTeamData();
+    // Realtime listener for team updates (points changing)
+    const channel = supabase.channel('analytics-team-refresh')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchTeamData)
+      .subscribe();
+
+    const interval = setInterval(fetchTeamData, 20000); // 20s backup
+    return () => {
+        supabase.removeChannel(channel);
+        clearInterval(interval);
+    };
   }, []);
 
   const fetchTeamData = async () => {
