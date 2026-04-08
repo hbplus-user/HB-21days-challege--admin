@@ -137,15 +137,17 @@ export function TeamManagement() {
 
   const handleUpdateTeamLogo = async (teamName: string, file: File) => {
     try {
-        const fName = `clans/${teamName}-${Date.now()}`;
-        const { error: uE } = await supabase.storage.from('proofs').upload(fName, file, { upsert: true });
+        const uniqueId = Math.random().toString(36).substring(7);
+        const fName = `clans/${teamName.replace(/\s+/g, '-')}-${Date.now()}-${uniqueId}`;
+        const { error: uE } = await supabase.storage.from('avatars').upload(fName, file, { upsert: true });
         if (uE) throw uE;
 
-        const fUrl = supabase.storage.from('proofs').getPublicUrl(fName).data.publicUrl;
+        const fUrl = supabase.storage.from('avatars').getPublicUrl(fName).data.publicUrl;
         const { error } = await supabase.from('clans').update({ logo_url: fUrl }).eq('name', teamName);
         if (error) throw error;
         
         fetchData();
+        alert('Logo updated successfully!');
     } catch (e: any) {
         console.error(e);
         alert(`Logo update failed: ${e.message}`);
