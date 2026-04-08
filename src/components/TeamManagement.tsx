@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, Users, Award, Sparkles, Trash2, ShieldCheck, X, Edit2, Check } from "lucide-react";
+import { Plus, Users, Award, Sparkles, Trash2, ShieldCheck, X, Edit2, Check, Camera } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -135,6 +135,23 @@ export function TeamManagement() {
   };
 
 
+  const handleUpdateTeamLogo = async (teamName: string, file: File) => {
+    try {
+        const fName = `clans/${teamName}-${Date.now()}`;
+        const { error: uE } = await supabase.storage.from('proofs').upload(fName, file);
+        if (uE) throw uE;
+
+        const fUrl = supabase.storage.from('proofs').getPublicUrl(fName).data.publicUrl;
+        const { error } = await supabase.from('clans').update({ logo: fUrl }).eq('name', teamName);
+        if (error) throw error;
+        
+        fetchData();
+    } catch (e: any) {
+        console.error(e);
+        alert(`Logo update failed: ${e.message}`);
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '48px' }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', paddingBottom: '32px', borderBottom: '1px solid rgba(83, 55, 43, 0.05)' }}>
@@ -151,8 +168,27 @@ export function TeamManagement() {
         {clans.filter(t => t.name !== 'Independent').map((team) => (
           <motion.div key={team.id} className="premium-card">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '32px' }}>
-                <div style={{ width: '56px', height: '56px', backgroundColor: team.color, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden' }}>
-                   {team.logo ? <img src={team.logo} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Users size={24} />}
+                <div style={{ position: 'relative' }}>
+                    <div style={{ width: '56px', height: '56px', backgroundColor: team.color, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', overflow: 'hidden' }}>
+                       {team.logo ? <img src={team.logo} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Users size={24} />}
+                    </div>
+                    <button 
+                        onClick={() => {
+                            const input = document.createElement('input');
+                            input.type = 'file';
+                            input.accept = 'image/*';
+                            input.onchange = (e: any) => {
+                                const file = e.target.files[0];
+                                if (file) handleUpdateTeamLogo(team.name, file);
+                            };
+                            input.click();
+                        }}
+                        style={{ position: 'absolute', bottom: '-4px', right: '-4px', background: '#9f4022', color: 'white', border: 'none', width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 10px rgba(159, 64, 34, 0.3)', transition: 'transform 0.2s' }}
+                        onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
+                        onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
+                    >
+                        <Camera size={12} />
+                    </button>
                 </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
