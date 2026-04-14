@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { UserCheck, UserX, Search, ShieldCheck, Mail, ShieldAlert, Trash2, Edit2, Check, X, Camera, UploadCloud, Award } from "lucide-react";
+import { UserCheck, UserX, Search, ShieldCheck, Mail, ShieldAlert, Trash2, Edit2, Check, X, Camera, UploadCloud, Award, FileText, Clock, History } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase } from "@/lib/supabase";
 
@@ -12,6 +12,9 @@ export function MemberManagement() {
   const [editFormData, setEditFormData] = useState({ name: '', email: '', avatar_url: '' });
   const [isUploading, setIsUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedMemberLogs, setSelectedMemberLogs] = useState<any>(null);
+  const [memberHistory, setMemberHistory] = useState<any[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
   useEffect(() => {
     fetchMembers();
@@ -27,6 +30,33 @@ export function MemberManagement() {
     const { data } = await supabase.from('profiles').select('*').order('name');
     if (data) setMembers(data);
     setIsLoading(false);
+  };
+
+  const fetchMemberHistory = async (member: any) => {
+    setIsHistoryLoading(true);
+    setSelectedMemberLogs(member);
+    
+    // Fetch both submissions and manual awards
+    const { data: subs } = await supabase
+        .from('submissions')
+        .select('*, tasks(title, points), flashcards(text, points)')
+        .eq('user_id', member.id)
+        .order('created_at', { ascending: false });
+    
+    const { data: awards } = await supabase
+        .from('manual_awards')
+        .select('*')
+        .eq('user_id', member.id)
+        .order('created_at', { ascending: false });
+
+    // Combine and sort by date
+    const combined = [
+        ...(subs || []).map(s => ({ ...s, logType: 'submission' })),
+        ...(awards || []).map(a => ({ ...a, logType: 'award' }))
+    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    setMemberHistory(combined);
+    setIsHistoryLoading(false);
   };
 
   const toggleAccess = async (id: string, currentStatus: boolean) => {
@@ -264,7 +294,7 @@ export function MemberManagement() {
                     )}
                   </div>
                   
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
                     {isEditing ? (
                         <>
                             <button onClick={saveEdit} style={{ background: '#6f8e7c', border: 'none', color: 'white', padding: '10px', borderRadius: '12px', cursor: 'pointer' }}><Check size={16} /></button>
@@ -272,6 +302,14 @@ export function MemberManagement() {
                         </>
                     ) : (
                         <>
+                            <button 
+                                onClick={() => fetchMemberHistory(member)} 
+                                title="View Logs"
+                                style={{ background: 'rgba(83, 55, 43, 0.05)', border: '1px solid rgba(83, 55, 43, 0.1)', color: '#53372b', padding: '10px', borderRadius: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}
+                            >
+                                <FileText size={16} />
+                                <span style={{ fontSize: '10px', fontWeight: 'bold' }}>LOGS</span>
+                            </button>
                             <button onClick={() => startEditing(member)} style={{ background: 'transparent', border: '1px solid rgba(83, 55, 43, 0.1)', color: '#53372b', padding: '10px', borderRadius: '12px', cursor: 'pointer' }}><Edit2 size={16} /></button>
                             <button onClick={() => deleteMember(member.id, member.name)} style={{ background: 'transparent', border: '1px solid rgba(159, 64, 34, 0.1)', color: '#9f4022', padding: '10px', borderRadius: '12px', cursor: 'pointer' }}><Trash2 size={16} /></button>
                         </>
@@ -337,6 +375,101 @@ export function MemberManagement() {
           })}
         </AnimatePresence>
       </div>
+
+      {/* MEMBER LOGS OVERLAY */}
+      <AnimatePresence>
+          {selectedMemberLogs && (
+              <div 
+                style={{ position: 'fixed', inset: 0, background: 'rgba(83, 55, 43, 0.4)', backdropFilter: 'blur(8px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}
+                onClick={() => setSelectedMemberLogs(null)}
+              >
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ background: 'white', width: '100%', maxWidth: '800px', maxHeight: '90vh', borderRadius: '32px', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 40px 100px rgba(0,0,0,0.3)' }}
+                  >
+                      {/* Header */}
+                      <div style={{ padding: '32px', background: '#fcfaf5', borderBottom: '1px solid rgba(83, 55, 43, 0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#9f4022', marginBottom: '4px' }}>
+                                <History size={14} />
+                                <span style={{ fontSize: '10px', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.2em' }}>Audit Log</span>
+                              </div>
+                              <h3 style={{ margin: 0, fontSize: '24px', fontFamily: "'Bodoni Moda', serif", color: '#53372b' }}>{selectedMemberLogs.name}'s History</h3>
+                          </div>
+                          <button 
+                            onClick={() => setSelectedMemberLogs(null)}
+                            style={{ background: 'white', border: '1px solid rgba(83, 55, 43, 0.1)', padding: '12px', borderRadius: '16px', cursor: 'pointer', color: '#53372b' }}
+                          >
+                            <X size={20} />
+                          </button>
+                      </div>
+
+                      {/* Content */}
+                      <div style={{ flex: 1, overflowY: 'auto', padding: '32px' }}>
+                          {isHistoryLoading ? (
+                              <div style={{ textAlign: 'center', padding: '40px', color: 'rgba(83, 55, 43, 0.4)' }}>
+                                  <div className="animate-spin" style={{ marginBottom: '12px' }}>⌛</div>
+                                  <p style={{ fontSize: '12px', fontWeight: 'bold' }}>Retrieving secure logs...</p>
+                              </div>
+                          ) : memberHistory.length === 0 ? (
+                              <div style={{ textAlign: 'center', padding: '60px', borderRadius: '24px', border: '2px dashed rgba(83, 55, 43, 0.05)', color: 'rgba(83, 55, 43, 0.3)' }}>
+                                  <p style={{ fontSize: '14px' }}>No points or submissions recorded yet.</p>
+                              </div>
+                          ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                  {memberHistory.map((log, idx) => (
+                                      <div key={idx} style={{ padding: '20px', borderRadius: '20px', background: '#fcfaf5', border: '1px solid rgba(83, 55, 43, 0.03)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                          <div style={{ display: 'flex', gap: '20px', alignItems: 'center' }}>
+                                              <div style={{ 
+                                                  width: '40px', height: '40px', borderRadius: '12px', 
+                                                  background: log.logType === 'submission' ? 'rgba(111, 142, 124, 0.1)' : 'rgba(201, 157, 93, 0.1)',
+                                                  color: log.logType === 'submission' ? '#6f8e7c' : '#c99d5d',
+                                                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                              }}>
+                                                  {log.logType === 'submission' ? <Camera size={18} /> : <Award size={18} />}
+                                              </div>
+                                              <div>
+                                                  <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#53372b' }}>
+                                                      {log.logType === 'submission' 
+                                                        ? (log.tasks?.title || log.flashcards?.text || 'Submission')
+                                                        : (log.reason || 'Manual Points Award')}
+                                                  </div>
+                                                  <div style={{ fontSize: '10px', color: 'rgba(83, 55, 43, 0.4)', marginTop: '2px' }}>
+                                                      {new Date(log.created_at).toLocaleString()} 
+                                                      {log.logType === 'submission' && ` • Status: ${log.status}`}
+                                                  </div>
+                                                  {log.approved_by && (
+                                                      <div style={{ fontSize: '9px', color: '#9f4022', fontWeight: '900', textTransform: 'uppercase', marginTop: '4px' }}>
+                                                          Audited By: {log.approved_by}
+                                                      </div>
+                                                  )}
+                                              </div>
+                                          </div>
+                                          <div style={{ textAlign: 'right' }}>
+                                              <div style={{ fontSize: '16px', fontWeight: '900', color: log.logType === 'submission' && log.status !== 'approved' ? 'rgba(83, 55, 43, 0.2)' : '#9f4022' }}>
+                                                  +{log.points || (log.tasks?.points || log.flashcards?.points || 0)}
+                                              </div>
+                                              <div style={{ fontSize: '9px', color: 'rgba(83, 55, 43, 0.4)', fontWeight: 'bold' }}>POINTS</div>
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
+                      </div>
+                      
+                      {/* Footer */}
+                      <div style={{ padding: '24px 32px', background: '#fcfaf5', borderTop: '1px solid rgba(83, 55, 43, 0.05)', textAlign: 'center' }}>
+                          <p style={{ margin: 0, fontSize: '11px', color: 'rgba(83, 55, 43, 0.4)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                            Restricted Access • Control Tower Internal Log
+                          </p>
+                      </div>
+                  </motion.div>
+              </div>
+          )}
+      </AnimatePresence>
     </div>
   );
 }

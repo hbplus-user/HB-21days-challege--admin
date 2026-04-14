@@ -17,6 +17,7 @@ function ApprovalsQueue() {
   const [processed, setProcessed] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [retryStates, setRetryStates] = useState<{ [id: string]: string }>({});
+  const [totals, setTotals] = useState({ approved: 0, retry: 0, rejected: 0 });
 
   useEffect(() => {
     fetchSubmissions();
@@ -25,8 +26,23 @@ function ApprovalsQueue() {
   }, []);
 
   const fetchSubmissions = async () => {
+    // 1. Fetch real-time totals for each status
+    const { count: approvedCount } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('status', 'approved');
+    const { count: retryCount } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('status', 'retry');
+    const { count: rejectedCount } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('status', 'rejected');
+
+    setTotals({
+        approved: approvedCount || 0,
+        retry: retryCount || 0,
+        rejected: rejectedCount || 0
+    });
+
+    // 2. Fetch pending queue
     const { data: pending } = await supabase.from('submissions').select('*, profiles (id, name, team_name), tasks (title, proof_type, points), flashcards (text, points)').eq('status', 'under-review');
+    
+    // 3. Keep showing recent processed for the visual log (optional)
     const { data: recent } = await supabase.from('submissions').select('*, profiles (id, name, team_name), tasks (title, proof_type, points), flashcards (text, points)').neq('status', 'under-review').order('created_at', { ascending: false }).limit(10);
+
     if (pending) setSubmissions(pending);
     if (recent) setProcessed(recent);
     setIsLoading(false);
@@ -34,16 +50,30 @@ function ApprovalsQueue() {
 
   const handleStatusUpdate = async (subId: string, status: 'approved' | 'retry', userId: string, pts: number = 0, comment?: string) => {
     try {
+        // GET CURRENT ADMIN (With Fallback)
+        const { data: { user } } = await supabase.auth.getUser();
+        let adminEmail = user?.email;
+        
+        if (!adminEmail) {
+            const { data: { session } } = await supabase.auth.getSession();
+            adminEmail = session?.user?.email || 'Admin (Session Lost)';
+        }
+
         const { error: subErr } = await supabase.from('submissions').update({ 
             status, 
-            rejection_comment: comment || null
+            rejection_comment: comment || null,
+            approved_by: adminEmail,
+            processed_at: new Date().toISOString()
         }).eq('id', subId);
         
         if (subErr) throw subErr;
 
         if (status === 'approved') {
-            const { data: profile } = await supabase.from('profiles').select('points').eq('id', userId).single();
-            await supabase.from('profiles').update({ points: (profile?.points || 0) + pts }).eq('id', userId);
+            const { data: profile, error: fetchErr } = await supabase.from('profiles').select('points').eq('id', userId).single();
+            if (fetchErr) throw new Error(`Could not fetch user profile for point update: ${fetchErr.message}`);
+            if (!profile) throw new Error("User profile not found for point update.");
+            
+            await supabase.from('profiles').update({ points: (profile.points || 0) + pts }).eq('id', userId);
         }
 
         // Clear retry input for this submission
@@ -57,9 +87,9 @@ function ApprovalsQueue() {
 
   const stats = {
     pending: submissions.length,
-    passed: processed.filter(s => s.status === 'approved').length,
-    rejected: processed.filter(s => s.status === 'rejected').length,
-    resubmit: processed.filter(s => s.status === 'retry').length,
+    passed: totals.approved,
+    rejected: totals.rejected,
+    resubmit: totals.retry,
   };
 
   return (

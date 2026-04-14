@@ -1,8 +1,8 @@
 import { motion, useScroll, useTransform } from "framer-motion";
-import { Bell, LayoutDashboard, LogOut } from "lucide-react";
+import { Bell, LayoutDashboard, LogOut, History } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-export function Header() {
+export function Header({ onShowLogs }: { onShowLogs: () => void }) {
   const { scrollY } = useScroll();
   const backgroundY = useTransform(scrollY, [0, 100], ["rgba(255, 255, 255, 0)", "rgba(255, 255, 255, 0.4)"]);
 
@@ -73,6 +73,28 @@ export function Header() {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
+        <motion.button 
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+          onClick={onShowLogs}
+          style={{ 
+            width: '44px', 
+            height: '44px', 
+            borderRadius: '16px', 
+            backgroundColor: 'rgba(255, 255, 255, 0.6)', 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'center', 
+            color: '#9f4022',
+            border: '1px solid rgba(159, 64, 34, 0.1)',
+            cursor: 'pointer',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.03)'
+          }}
+          title="System Logs"
+        >
+          <History size={20} />
+        </motion.button>
+
         <motion.button 
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.9 }}

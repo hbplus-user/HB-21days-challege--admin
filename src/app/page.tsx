@@ -2,6 +2,7 @@
 import { Header } from "@/components/Header";
 import { TabController } from "@/components/TabController";
 import { AdminLogin } from "@/components/AdminLogin";
+import { AuditLogOverlay } from "@/components/AuditLogOverlay";
 import { motion, AnimatePresence } from "framer-motion";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -16,6 +17,7 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState<User | null>(null);
   const [isAuthorized, setIsAuthorized] = useState(false);
+  const [isLogsOpen, setIsLogsOpen] = useState(false);
 
   useEffect(() => {
     console.log("[HB+ DEBUG] App bootstrapping...");
@@ -129,8 +131,9 @@ export default function Home() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
           >
-            <Header />
+            <Header onShowLogs={() => setIsLogsOpen(true)} />
             <TabController />
+            <AuditLogOverlay isOpen={isLogsOpen} onClose={() => setIsLogsOpen(false)} />
           </motion.div>
         )}
       </AnimatePresence>
