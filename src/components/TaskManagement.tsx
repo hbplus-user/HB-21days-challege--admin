@@ -375,13 +375,36 @@ export function TaskManagement() {
         if (updateErr) throw updateErr;
 
         // 3. Log award for Daily/Weekly tracking
-        await supabase.from('manual_awards').insert({
+        const { data: mAward, error: mErr } = await supabase.from('manual_awards').insert({
             user_id: awardData.userId,
             points: Number(awardData.points),
             reason: awardData.reason || 'Admin Award',
             day: activeDay,
             week: activeWeek
-        });
+        }).select().single();
+        
+        if (!mErr) {
+            // 4. Update Central Ledger
+            const { data: ledgerRow, error: ledgerErr } = await supabase.from('point_ledger').insert({
+                user_id: awardData.userId,
+                points: Number(awardData.points),
+                source_type: 'manual_award',
+                source_id: mAward?.id?.toString() || 'manual',
+                reason: awardData.reason || 'Admin Award',
+                day: activeDay,
+                week: activeWeek
+            }).select().single();
+
+            if (ledgerErr) {
+                console.error('Ledger Error:', ledgerErr);
+                alert(`Ledger Audit Failed: ${ledgerErr.message}`);
+            } else {
+                console.log('Ledger Row Created:', ledgerRow);
+                alert(`Success! Ledger Entry Recorded.\nPoints: ${ledgerRow?.points}\nTransaction ID: ${ledgerRow?.id}`);
+            }
+        } else {
+            alert(`First step (manual_awards) failed: ${mErr.message}`);
+        }
 
         alert(`Successfully awarded ${awardData.points} points to ${profile.name}!`);
         setIsAwardingPoints(false);

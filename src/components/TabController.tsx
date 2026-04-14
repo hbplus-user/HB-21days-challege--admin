@@ -48,16 +48,15 @@ function ApprovalsQueue() {
     setIsLoading(false);
   };
 
-  const handleStatusUpdate = async (subId: string, status: 'approved' | 'retry', userId: string, pts: number = 0, comment?: string) => {
+  const handleStatusUpdate = async (sub: any, status: 'approved' | 'retry', comment?: string) => {
     try {
-        // GET CURRENT ADMIN (With Fallback)
+        const subId = sub.id;
+        const userId = sub.profiles?.id;
+        const pts = sub.tasks?.points || sub.flashcards?.points || 0;
+
+        // GET CURRENT ADMIN
         const { data: { user } } = await supabase.auth.getUser();
-        let adminEmail = user?.email;
-        
-        if (!adminEmail) {
-            const { data: { session } } = await supabase.auth.getSession();
-            adminEmail = session?.user?.email || 'Admin (Session Lost)';
-        }
+        let adminEmail = user?.email || 'Admin';
 
         const { error: subErr } = await supabase.from('submissions').update({ 
             status, 
@@ -69,19 +68,51 @@ function ApprovalsQueue() {
         if (subErr) throw subErr;
 
         if (status === 'approved') {
-            const { data: profile, error: fetchErr } = await supabase.from('profiles').select('points').eq('id', userId).single();
-            if (fetchErr) throw new Error(`Could not fetch user profile for point update: ${fetchErr.message}`);
-            if (!profile) throw new Error("User profile not found for point update.");
-            
-            await supabase.from('profiles').update({ points: (profile.points || 0) + pts }).eq('id', userId);
+            // --- IDEMPOTENCY GUARD: Check if points were already awarded for this submission ---
+            const { data: existingLedger } = await supabase
+                .from('point_ledger')
+                .select('id')
+                .eq('source_id', subId.toString())
+                .eq('user_id', userId)
+                .maybeSingle();
+
+            if (existingLedger) {
+                // Points already credited for this submission — skip to avoid double-count
+                console.warn(`[Approval Guard] Points already awarded for submission ${subId}. Skipping.`);
+                alert('⚠️ Note: Points for this submission were already recorded. No duplicate credit applied.');
+            } else {
+                // 1. Fetch current profile total
+                const { data: profile, error: fetchErr } = await supabase.from('profiles').select('points').eq('id', userId).single();
+                if (fetchErr) throw new Error(`Could not fetch profile: ${fetchErr.message}`);
+
+                // 2. Update Profile Total (only if not already credited)
+                await supabase.from('profiles').update({ points: (profile.points || 0) + pts }).eq('id', userId);
+
+                // 3. CAPTURE IN LEDGER (For backend audit)
+                const { error: ledgerErr } = await supabase.from('point_ledger').insert({
+                    user_id: userId,
+                    points: pts,
+                    source_type: sub.tasks ? 'task' : 'flashcard',
+                    source_id: subId.toString(),
+                    reason: sub.tasks?.title || sub.flashcards?.text || 'Challenge Submission',
+                    day: sub.tasks?.day || null,
+                    week: sub.tasks?.week || sub.flashcards?.week || null
+                });
+                if (ledgerErr) {
+                    console.error('Ledger Error:', ledgerErr);
+                    alert(`Ledger Audit Failed: ${ledgerErr.message}`);
+                } else {
+                    console.log('Ledger entry created successfully');
+                    alert('Success: Ledger Entry Recorded!');
+                }
+            }
         }
 
-        // Clear retry input for this submission
         setRetryStates(prev => { const n = { ...prev }; delete n[subId]; return n; });
         fetchSubmissions();
     } catch (e: any) {
         console.error('Approval Error:', e);
-        alert(`Approval Failed! Error: ${e.message}`);
+        alert(`Approval Failed: ${e.message}`);
     }
   };
 
@@ -140,11 +171,10 @@ function ApprovalsQueue() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {retryStates[sub.id] !== undefined ? (
-                  // Try Again: show inline comment input
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <textarea
                       autoFocus
-                      placeholder="Enter instruction for client (e.g. Blurry photo, show full body)..."
+                      placeholder="Enter instruction for client..."
                       value={retryStates[sub.id]}
                       onChange={(e) => setRetryStates(prev => ({ ...prev, [sub.id]: e.target.value }))}
                       style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid rgba(159, 64, 34, 0.2)', fontSize: '12px', resize: 'none', minHeight: '70px', fontFamily: 'inherit', color: '#53372b', boxSizing: 'border-box' }}
@@ -157,19 +187,18 @@ function ApprovalsQueue() {
                         Cancel
                       </button>
                       <button
-                        onClick={() => handleStatusUpdate(sub.id, 'retry', sub.profiles?.id, 0, retryStates[sub.id])}
+                        onClick={() => handleStatusUpdate(sub, 'retry', retryStates[sub.id])}
                         disabled={!retryStates[sub.id]?.trim()}
                         style={{ background: retryStates[sub.id]?.trim() ? '#c99d5d' : '#eee', color: retryStates[sub.id]?.trim() ? 'white' : '#aaa', border: 'none', padding: '8px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: retryStates[sub.id]?.trim() ? 'pointer' : 'default' }}
                       >
-                        Send Instruction
+                        Send
                       </button>
                     </div>
                   </div>
                 ) : (
-                  // Default: Approve + Try Again buttons
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                     <button 
-                      onClick={() => handleStatusUpdate(sub.id, 'approved', sub.profiles?.id, sub.tasks?.points || sub.flashcards?.points || 0)} 
+                      onClick={() => handleStatusUpdate(sub, 'approved')} 
                       style={{ background: '#9f4022', color: 'white', border: 'none', padding: '10px', borderRadius: '8px', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer' }}
                     >
                       ✓ Approve
@@ -188,6 +217,7 @@ function ApprovalsQueue() {
         </AnimatePresence>
       </div>
     </div>
+
   );
 }
 
