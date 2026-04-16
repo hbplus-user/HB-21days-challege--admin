@@ -65,7 +65,7 @@ export function MemberManagement() {
 
             const syncedMembers = profiles.map(p => ({
                 ...p,
-                points: Number(p.points) || 0
+                points: pointMap[p.id] || 0
             }));
             setMembers(syncedMembers);
         }
