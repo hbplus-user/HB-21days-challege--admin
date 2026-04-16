@@ -19,9 +19,22 @@ export function TeamManagement() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    const debouncedFetch = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(fetchData, 1500);
+    };
+
     fetchData();
-    const channel = supabase.channel('team-mgmt').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchData).subscribe();
-    return () => { supabase.removeChannel(channel); };
+    const channel = supabase.channel('team-mgmt')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, debouncedFetch)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, debouncedFetch)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'manual_awards' }, debouncedFetch)
+        .subscribe();
+    return () => { 
+        supabase.removeChannel(channel); 
+        clearTimeout(timeout);
+    };
   }, []);
 
   const fetchData = async () => {
@@ -30,11 +43,28 @@ export function TeamManagement() {
 
     if (!profiles) return;
 
+    // Fetch truth from submissions and awards
+    const { data: subs } = await supabase.from('submissions')
+        .select('user_id, tasks(points), flashcards(points)')
+        .eq('status', 'approved');
+    const { data: awards } = await supabase.from('manual_awards')
+        .select('user_id, points');
+
+    const pointMap: { [key: string]: number } = {};
+    (subs || []).forEach(s => {
+        const pts = Number((s.tasks as any)?.points) || Number((s.flashcards as any)?.points) || 0;
+        pointMap[s.user_id] = (Number(pointMap[s.user_id]) || 0) + pts;
+    });
+    (awards || []).forEach(a => {
+        pointMap[a.user_id] = (Number(pointMap[a.user_id]) || 0) + (Number(a.points) || 0);
+    });
+
     const teamGroups: any = {};
     const colors = ["#9f4022", "#747440", "#344161", "#a9674d", "#d27440", "#6f8e7c"];
     
     profiles.forEach((p) => {
         const teamName = p.team_name || 'Independent';
+        const userPoints = pointMap[p.id] || 0;
         if (!teamGroups[teamName]) {
             const clanInfo = clansData?.find(c => c.name === teamName);
             teamGroups[teamName] = { 
@@ -49,8 +79,8 @@ export function TeamManagement() {
             };
         }
         teamGroups[teamName].members += 1;
-        teamGroups[teamName].points += (p.points || 0);
-        teamGroups[teamName].memberList.push({ id: p.id, name: p.name, email: p.email, role: p.role });
+        teamGroups[teamName].points += userPoints;
+        teamGroups[teamName].memberList.push({ id: p.id, name: p.name, email: p.email, role: p.role, points: userPoints });
     });
 
     setClans(Object.values(teamGroups));

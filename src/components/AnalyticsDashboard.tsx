@@ -84,22 +84,47 @@ export function AnalyticsDashboard() {
   const [teamRankings, setTeamRankings] = useState<any[]>([]);
 
   useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    const debouncedFetch = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(fetchTeamData, 1500);
+    };
+
     fetchTeamData();
     // Realtime listener for team updates (points changing)
     const channel = supabase.channel('analytics-team-refresh')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchTeamData)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, debouncedFetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'manual_awards' }, debouncedFetch)
       .subscribe();
 
-    const interval = setInterval(fetchTeamData, 20000); // 20s backup
+    const interval = setInterval(fetchTeamData, 30000); 
     return () => {
         supabase.removeChannel(channel);
         clearInterval(interval);
+        clearTimeout(timeout);
     };
   }, []);
 
   const fetchTeamData = async () => {
-    const { data: profiles } = await supabase.from('profiles').select('team_name, points');
+    const { data: profiles } = await supabase.from('profiles').select('id, team_name');
     if (!profiles) return;
+
+    // Fetch truth from submissions and awards
+    const { data: subs } = await supabase.from('submissions')
+        .select('user_id, tasks(points), flashcards(points)')
+        .eq('status', 'approved');
+    const { data: awards } = await supabase.from('manual_awards')
+        .select('user_id, points');
+
+    const pointMap: { [key: string]: number } = {};
+    (subs || []).forEach(s => {
+        const pts = (s.tasks as any)?.points || (s.flashcards as any)?.points || 0;
+        pointMap[s.user_id] = (pointMap[s.user_id] || 0) + pts;
+    });
+    (awards || []).forEach(a => {
+        pointMap[a.user_id] = (pointMap[a.user_id] || 0) + (a.points || 0);
+    });
 
     const rankings: any = {};
     profiles.forEach(p => {
@@ -108,7 +133,7 @@ export function AnalyticsDashboard() {
         if (!rankings[team]) {
             rankings[team] = { name: team, points: 0, members: 0 };
         }
-        rankings[team].points += (p.points || 0);
+        rankings[team].points += (pointMap[p.id] || 0);
         rankings[team].members += 1;
     });
 

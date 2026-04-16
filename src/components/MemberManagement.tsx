@@ -16,20 +16,64 @@ export function MemberManagement() {
   const [memberHistory, setMemberHistory] = useState<any[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
 
+  // Debounced fetch to prevent flooding
   useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    const debouncedFetch = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(fetchMembers, 1000);
+    };
+
     fetchMembers();
-    const sub = supabase.channel('member-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchMembers).subscribe();
-    const interval = setInterval(fetchMembers, 20000); // 20s backup
+    const sub = supabase.channel('member-updates')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, debouncedFetch)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, debouncedFetch)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'manual_awards' }, debouncedFetch)
+        .subscribe();
+    
+    const interval = setInterval(fetchMembers, 30000); // Increased to 30s
     return () => { 
         supabase.removeChannel(sub); 
         clearInterval(interval);
+        clearTimeout(timeout);
     };
   }, []);
 
   const fetchMembers = async () => {
-    const { data } = await supabase.from('profiles').select('*').order('name');
-    if (data) setMembers(data);
-    setIsLoading(false);
+    try {
+        const { data: profiles } = await supabase.from('profiles').select('*').order('name');
+        
+        // Use a single query for counts if possible, but for now optimization is on frequency
+        const { data: subs } = await supabase.from('submissions')
+            .select('user_id, tasks(points), flashcards(points)')
+            .eq('status', 'approved');
+        
+        const { data: awards } = await supabase.from('manual_awards')
+            .select('user_id, points');
+
+        if (profiles) {
+            const pointMap: { [key: string]: number } = {};
+            (subs || []).forEach(s => {
+                const userId = s.user_id;
+                const pts = Number((s.tasks as any)?.points) || Number((s.flashcards as any)?.points) || 0;
+                pointMap[userId] = (Number(pointMap[userId]) || 0) + pts;
+            });
+            (awards || []).forEach(a => {
+                const userId = a.user_id;
+                pointMap[userId] = (Number(pointMap[userId]) || 0) + (Number(a.points) || 0);
+            });
+
+            const syncedMembers = profiles.map(p => ({
+                ...p,
+                points: Number(p.points) || 0
+            }));
+            setMembers(syncedMembers);
+        }
+    } catch (err) {
+        console.error("Fetch error:", err);
+    } finally {
+        setIsLoading(false);
+    }
   };
 
   const fetchMemberHistory = async (member: any) => {
@@ -87,6 +131,44 @@ export function MemberManagement() {
         email: member.email || '',
         avatar_url: member.avatar_url || ''
     });
+  };
+
+  const handleAdjustPoints = async (memberId: string, currentPoints: number) => {
+    const adjString = prompt("Enter adjustment (e.g. +10 or -17):");
+    if (!adjString) return;
+    
+    const adjustment = parseInt(adjString);
+    if (isNaN(adjustment)) {
+        alert("Invalid number entered.");
+        return;
+    }
+
+    const dayString = prompt("Which Day should this adjustment apply to? (1-28):", "1");
+    if (!dayString) return;
+    const day = parseInt(dayString);
+
+    try {
+        // 1. Update Profile (Source of Truth for Overall)
+        const { error: pErr } = await supabase.from('profiles').update({ 
+            points: (Number(currentPoints) || 0) + adjustment 
+        }).eq('id', memberId);
+        if (pErr) throw pErr;
+
+        // 2. Insert Manual Award (Source of Truth for Daily/Weekly history)
+        const { error: aErr } = await supabase.from('manual_awards').insert({
+            user_id: memberId,
+            points: adjustment,
+            reason: "Admin Adjustment",
+            day: day,
+            week: Math.ceil(day / 7)
+        });
+        if (aErr) throw aErr;
+
+        alert(`Successfully adjusted points by ${adjustment}`);
+        fetchMembers();
+    } catch (err: any) {
+        alert(`Adjustment failed: ${err.message}`);
+    }
   };
 
   const saveEdit = async () => {
@@ -346,29 +428,55 @@ export function MemberManagement() {
                     <span style={{ fontSize: '10px', color: 'rgba(83, 55, 43, 0.4)', fontWeight: 'bold' }}>{member.points} PTS</span>
                   </div>
                   
-                  <motion.button
-                    whileHover={{ scale: 1.05 }}
-                    whileTap={{ scale: 0.95 }}
-                    onClick={() => toggleAccess(member.id, !isDeactivated)}
-                    style={{ 
-                      padding: '10px 20px', 
-                      borderRadius: '12px', 
-                      border: 'none', 
-                      backgroundColor: !isDeactivated ? 'rgba(210, 116, 64, 0.1)' : '#6f8e7c',
-                      color: !isDeactivated ? '#d27440' : 'white',
-                      fontSize: '11px',
-                      fontWeight: '900',
-                      textTransform: 'uppercase',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      boxShadow: '0 4px 12px rgba(0,0,0,0.02)'
-                    }}
-                  >
-                    {!isDeactivated ? <UserX size={14} /> : <UserCheck size={14} />}
-                    {!isDeactivated ? 'Deactivate Account' : 'Reactivate Account'}
-                  </motion.button>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => toggleAccess(member.id, !isDeactivated)}
+                      style={{ 
+                        padding: '10px 20px', 
+                        borderRadius: '12px', 
+                        border: 'none', 
+                        backgroundColor: !isDeactivated ? 'rgba(210, 116, 64, 0.1)' : '#6f8e7c',
+                        color: !isDeactivated ? '#d27440' : 'white',
+                        fontSize: '11px',
+                        fontWeight: '900',
+                        textTransform: 'uppercase',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.02)'
+                      }}
+                    >
+                      {!isDeactivated ? <UserX size={14} /> : <UserCheck size={14} />}
+                      {!isDeactivated ? 'Deactivate' : 'Reactivate'}
+                    </motion.button>
+
+                    <motion.button
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      onClick={() => handleAdjustPoints(member.id, member.points)}
+                      style={{ 
+                        padding: '10px 20px', 
+                        borderRadius: '12px', 
+                        border: 'none', 
+                        backgroundColor: '#53372b',
+                        color: 'white',
+                        fontSize: '11px',
+                        fontWeight: '900',
+                        textTransform: 'uppercase',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.02)'
+                      }}
+                    >
+                      <Award size={14} />
+                      Adjust Pts
+                    </motion.button>
+                  </div>
                </div>
             </motion.div>
           );

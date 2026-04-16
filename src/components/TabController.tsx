@@ -20,9 +20,18 @@ function ApprovalsQueue() {
   const [totals, setTotals] = useState({ approved: 0, retry: 0, rejected: 0 });
 
   useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    const debouncedFetch = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(fetchSubmissions, 1500);
+    };
+
     fetchSubmissions();
-    const channel = supabase.channel('submissions-review').on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, fetchSubmissions).subscribe();
-    return () => { supabase.removeChannel(channel); };
+    const channel = supabase.channel('submissions-review').on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, debouncedFetch).subscribe();
+    return () => { 
+        supabase.removeChannel(channel); 
+        clearTimeout(timeout);
+    };
   }, []);
 
   const fetchSubmissions = async () => {

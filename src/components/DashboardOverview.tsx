@@ -42,20 +42,29 @@ export function DashboardOverview() {
   });
 
   useEffect(() => {
+    let timeout: NodeJS.Timeout;
+    const debouncedFetch = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(fetchStats, 1500);
+    };
+
     fetchStats();
     
-    const subChannel = supabase.channel('dashboard-results').on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, fetchStats).subscribe();
-    const profChannel = supabase.channel('dashboard-profiles').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, fetchStats).subscribe();
+    const subChannel = supabase.channel('dashboard-results').on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, debouncedFetch).subscribe();
+    const profChannel = supabase.channel('dashboard-profiles').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, debouncedFetch).subscribe();
+    const awardChannel = supabase.channel('dashboard-awards').on('postgres_changes', { event: '*', schema: 'public', table: 'manual_awards' }, debouncedFetch).subscribe();
     const channel = supabase.channel('dashboard-settings')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'challenge_settings' }, fetchStats)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'challenge_settings' }, debouncedFetch)
       .subscribe();
 
-    const interval = setInterval(fetchStats, 20000); // 20s backup
+    const interval = setInterval(fetchStats, 30000); 
     return () => {
       supabase.removeChannel(channel);
       supabase.removeChannel(subChannel);
       supabase.removeChannel(profChannel);
+      supabase.removeChannel(awardChannel);
       clearInterval(interval);
+      clearTimeout(timeout);
     };
   }, []);
 
@@ -74,11 +83,24 @@ export function DashboardOverview() {
       currentDay = Math.max(1, Math.min(21, Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1));
     }
 
-    // 2. Top Client & Team
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('*')
-      .order('points', { ascending: false });
+    // 2. Fetch Profiles & Points Truth
+    const { data: profiles } = await supabase.from('profiles').select('*');
+    const { data: subs } = await supabase.from('submissions').select('user_id, tasks(points), flashcards(points)').eq('status', 'approved');
+    const { data: awards } = await supabase.from('manual_awards').select('user_id, points');
+
+    const pointMap: { [key: string]: number } = {};
+    (subs || []).forEach(s => {
+        const pts = (s.tasks as any)?.points || (s.flashcards as any)?.points || 0;
+        pointMap[s.user_id] = (pointMap[s.user_id] || 0) + pts;
+    });
+    (awards || []).forEach(a => {
+        pointMap[a.user_id] = (pointMap[a.user_id] || 0) + (a.points || 0);
+    });
+
+    const profilesWithPoints = (profiles || []).map(p => ({
+        ...p,
+        points: pointMap[p.id] || 0
+    })).sort((a, b) => b.points - a.points);
 
     // 3. Active & Pending
     const { data: submissions } = await supabase
@@ -90,12 +112,13 @@ export function DashboardOverview() {
       .from('tasks')
       .select('*, submissions(status)')
       .eq('day', currentDay); 
-    const topClient = profiles?.[0]?.name || 'None';
+    const topClient = profilesWithPoints[0]?.name || 'None';
     
     // Calculate Top Team
     const teamPoints: any = {};
-    profiles?.forEach(p => {
-        teamPoints[p.team_name] = (teamPoints[p.team_name] || 0) + (p.points || 0);
+    profilesWithPoints.forEach(p => {
+        const team = p.team_name || 'Independent';
+        teamPoints[team] = (teamPoints[team] || 0) + (p.points || 0);
     });
     const topTeam = Object.keys(teamPoints).reduce((a, b) => teamPoints[a] > teamPoints[b] ? a : b, 'Independent');
 
