@@ -15,6 +15,8 @@ export function MemberManagement() {
   const [selectedMemberLogs, setSelectedMemberLogs] = useState<any>(null);
   const [memberHistory, setMemberHistory] = useState<any[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
+  const [isShowingHistory, setIsShowingHistory] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState(20);
 
   // Debounced fetch to prevent flooding
   useEffect(() => {
@@ -31,7 +33,7 @@ export function MemberManagement() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'manual_awards' }, debouncedFetch)
         .subscribe();
     
-    const interval = setInterval(fetchMembers, 30000); // Increased to 30s
+    const interval = setInterval(fetchMembers, 120000); // 2 minutes
     return () => { 
         supabase.removeChannel(sub); 
         clearInterval(interval);
@@ -41,34 +43,9 @@ export function MemberManagement() {
 
   const fetchMembers = async () => {
     try {
-        const { data: profiles } = await supabase.from('profiles').select('*').order('name');
-        
-        // Use a single query for counts if possible, but for now optimization is on frequency
-        const { data: subs } = await supabase.from('submissions')
-            .select('user_id, tasks(points), flashcards(points)')
-            .eq('status', 'approved');
-        
-        const { data: awards } = await supabase.from('manual_awards')
-            .select('user_id, points');
-
-        if (profiles) {
-            const pointMap: { [key: string]: number } = {};
-            (subs || []).forEach(s => {
-                const userId = s.user_id;
-                const pts = Number((s.tasks as any)?.points) || Number((s.flashcards as any)?.points) || 0;
-                pointMap[userId] = (Number(pointMap[userId]) || 0) + pts;
-            });
-            (awards || []).forEach(a => {
-                const userId = a.user_id;
-                pointMap[userId] = (Number(pointMap[userId]) || 0) + (Number(a.points) || 0);
-            });
-
-            const syncedMembers = profiles.map(p => ({
-                ...p,
-                points: pointMap[p.id] || 0
-            }));
-            setMembers(syncedMembers);
-        }
+        const { data: profiles, error } = await supabase.from('profiles').select('*').order('name');
+        if (error) throw error;
+        if (profiles) setMembers(profiles);
     } catch (err) {
         console.error("Fetch error:", err);
     } finally {
@@ -76,31 +53,61 @@ export function MemberManagement() {
     }
   };
 
-  const fetchMemberHistory = async (member: any) => {
+  const fetchMemberHistory = async (member: any, mode: 'today' | 'history' = 'today', limit = 20) => {
     setIsHistoryLoading(true);
     setSelectedMemberLogs(member);
-    
-    // Fetch both submissions and manual awards
-    const { data: subs } = await supabase
-        .from('submissions')
-        .select('*, tasks(title, points), flashcards(text, points)')
-        .eq('user_id', member.id)
-        .order('created_at', { ascending: false });
-    
-    const { data: awards } = await supabase
-        .from('manual_awards')
-        .select('*')
-        .eq('user_id', member.id)
-        .order('created_at', { ascending: false });
+    if (mode === 'today') {
+        setIsShowingHistory(false);
+        setHistoryLimit(20);
+    }
 
-    // Combine and sort by date
-    const combined = [
-        ...(subs || []).map(s => ({ ...s, logType: 'submission' })),
-        ...(awards || []).map(a => ({ ...a, logType: 'award' }))
-    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    try {
+        const startOfToday = new Date();
+        startOfToday.setHours(0,0,0,0);
+        const isoToday = startOfToday.toISOString();
 
-    setMemberHistory(combined);
-    setIsHistoryLoading(false);
+        let subQuery = supabase.from('submissions').select('*, tasks(title, points), flashcards(text, points)').eq('user_id', member.id).order('created_at', { ascending: false });
+        let awardQuery = supabase.from('manual_awards').select('*').eq('user_id', member.id).order('created_at', { ascending: false });
+
+        if (mode === 'today') {
+            subQuery = subQuery.gte('created_at', isoToday);
+            awardQuery = awardQuery.gte('created_at', isoToday);
+        } else {
+            subQuery = subQuery.lt('created_at', isoToday).range(0, limit - 1);
+            awardQuery = awardQuery.lt('created_at', isoToday).limit(10);
+        }
+
+        const [subsRes, awardsRes] = await Promise.all([subQuery, awardQuery]);
+        
+        const combined = [
+            ...(subsRes.data || []).map(s => ({ ...s, logType: 'submission' })),
+            ...(awardsRes.data || []).map(a => ({ ...a, logType: 'award' }))
+        ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+        if (mode === 'today') {
+            setMemberHistory(combined);
+        } else {
+            setMemberHistory(prev => {
+                const todayOnly = prev.filter(l => new Date(l.created_at) >= startOfToday);
+                return [...todayOnly, ...combined];
+            });
+        }
+    } catch (e) {
+        console.error("History fetch error:", e);
+    } finally {
+        setIsHistoryLoading(false);
+    }
+  };
+
+  const handleLoadMoreHistory = () => {
+    if (!isShowingHistory) {
+      setIsShowingHistory(true);
+      fetchMemberHistory(selectedMemberLogs, 'history', 20);
+    } else {
+      const newLimit = historyLimit + 20;
+      setHistoryLimit(newLimit);
+      fetchMemberHistory(selectedMemberLogs, 'history', newLimit);
+    }
   };
 
   const toggleAccess = async (id: string, currentStatus: boolean) => {
@@ -523,8 +530,17 @@ export function MemberManagement() {
                                   <p style={{ fontSize: '12px', fontWeight: 'bold' }}>Retrieving secure logs...</p>
                               </div>
                           ) : memberHistory.length === 0 ? (
-                              <div style={{ textAlign: 'center', padding: '60px', borderRadius: '24px', border: '2px dashed rgba(83, 55, 43, 0.05)', color: 'rgba(83, 55, 43, 0.3)' }}>
-                                  <p style={{ fontSize: '14px' }}>No points or submissions recorded yet.</p>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
+                                  <div style={{ textAlign: 'center', padding: '40px 60px', borderRadius: '24px', border: '2px dashed rgba(83, 55, 43, 0.05)', color: 'rgba(83, 55, 43, 0.3)', width: '100%' }}>
+                                      <p style={{ fontSize: '14px', margin: 0 }}>No activity recorded today.</p>
+                                  </div>
+                                  <button
+                                    onClick={handleLoadMoreHistory}
+                                    disabled={isHistoryLoading}
+                                    style={{ width: '100%', padding: '16px', background: 'transparent', border: '1px dashed #9f4022', color: '#9f4022', borderRadius: '16px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', cursor: 'pointer' }}
+                                  >
+                                    {isHistoryLoading ? 'Retrieving Records...' : 'View Previous Days ↓'}
+                                  </button>
                               </div>
                           ) : (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -564,6 +580,14 @@ export function MemberManagement() {
                                           </div>
                                       </div>
                                   ))}
+                                  
+                                  <button
+                                    onClick={handleLoadMoreHistory}
+                                    disabled={isHistoryLoading}
+                                    style={{ width: '100%', padding: '16px', background: 'transparent', border: '1px dashed #9f4022', color: '#9f4022', borderRadius: '16px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', cursor: 'pointer', marginTop: '12px' }}
+                                  >
+                                    {isHistoryLoading ? 'Retrieving Records...' : isShowingHistory ? 'Load More History ↓' : 'View Previous Days ↓'}
+                                  </button>
                               </div>
                           )}
                       </div>

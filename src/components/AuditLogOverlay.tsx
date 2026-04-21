@@ -8,26 +8,62 @@ import { supabase } from "@/lib/supabase";
 export function AuditLogOverlay({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [logs, setLogs] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isShowingHistory, setIsShowingHistory] = useState(false);
+  const [logLimit, setLogLimit] = useState(20);
 
   useEffect(() => {
     if (isOpen) {
-      fetchLogs();
+      setIsShowingHistory(false);
+      setLogLimit(20);
+      fetchLogs('today');
     }
   }, [isOpen]);
 
-  const fetchLogs = async () => {
+  const fetchLogs = async (mode: 'today' | 'history', limit = 20) => {
     setIsLoading(true);
-    const { data, error } = await supabase
-      .from('submissions')
-      .select('id, status, created_at, approved_by, processed_at, profiles(name, team_name), tasks(title, points), flashcards(text, points)')
-      .neq('status', 'under-review')
-      .order('processed_at', { ascending: false, nullsFirst: false })
-      .limit(50);
-    
-    if (error) console.error("Fetch Error:", error);
-    
-    if (data) setLogs(data);
+    try {
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const isoToday = startOfToday.toISOString();
+
+      let query = supabase
+        .from('submissions')
+        .select('id, status, created_at, approved_by, processed_at, profiles(name, team_name), tasks(title, points), flashcards(text, points)')
+        .neq('status', 'under-review')
+        .order('processed_at', { ascending: false, nullsFirst: false });
+
+      if (mode === 'today') {
+        query = query.gte('processed_at', isoToday);
+      } else {
+        query = query.lt('processed_at', isoToday).range(0, limit - 1);
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+      
+      if (mode === 'today') {
+        setLogs(data || []);
+      } else {
+        setLogs(prev => {
+          const todayLogs = prev.filter(l => new Date(l.processed_at || l.created_at) >= startOfToday);
+          return [...todayLogs, ...(data || [])];
+        });
+      }
+    } catch (e) {
+      console.error("Fetch Error:", e);
+    }
     setIsLoading(false);
+  };
+
+  const handleLoadMore = () => {
+    if (!isShowingHistory) {
+      setIsShowingHistory(true);
+      fetchLogs('history', 20);
+    } else {
+      const newLimit = logLimit + 20;
+      setLogLimit(newLimit);
+      fetchLogs('history', newLimit);
+    }
   };
 
   return (
@@ -57,7 +93,7 @@ export function AuditLogOverlay({ isOpen, onClose }: { isOpen: boolean; onClose:
                     <motion.button
                       whileHover={{ scale: 1.05 }}
                       whileTap={{ scale: 0.95 }}
-                      onClick={fetchLogs}
+                      onClick={() => fetchLogs('today')}
                       disabled={isLoading}
                       style={{ background: 'rgba(159, 64, 34, 0.05)', border: '1px solid rgba(159, 64, 34, 0.1)', color: '#9f4022', padding: '12px 24px', borderRadius: '16px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: '8px' }}
                     >
@@ -81,6 +117,7 @@ export function AuditLogOverlay({ isOpen, onClose }: { isOpen: boolean; onClose:
                          <p style={{ color: 'rgba(83, 55, 43, 0.4)', fontWeight: 'bold', fontSize: '12px', textTransform: 'uppercase' }}>Synchronizing control logs...</p>
                     </div>
                 ) : (
+                    <>
                     <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                         <thead style={{ position: 'sticky', top: 0, background: 'white', zIndex: 10 }}>
                             <tr>
@@ -110,7 +147,7 @@ export function AuditLogOverlay({ isOpen, onClose }: { isOpen: boolean; onClose:
                                             {log.status}
                                         </span>
                                     </td>
-                                     <td style={{ padding: '20px 12px' }}>
+                                    <td style={{ padding: '20px 12px' }}>
                                         <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#9f4022' }}>
                                             {log.approved_by || (log.processed_at ? 'System Admin' : 'Legacy Entry')}
                                         </div>
@@ -119,6 +156,16 @@ export function AuditLogOverlay({ isOpen, onClose }: { isOpen: boolean; onClose:
                             ))}
                         </tbody>
                     </table>
+                    <div style={{ padding: '32px 0' }}>
+                        <button
+                          onClick={handleLoadMore}
+                          disabled={isLoading}
+                          style={{ width: '100%', padding: '16px', background: 'transparent', border: '1px dashed #9f4022', color: '#9f4022', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer' }}
+                        >
+                          {isLoading ? "Retrieving..." : isShowingHistory ? "Load More History ↓" : "View Previous Days ↓"}
+                        </button>
+                    </div>
+                    </>
                 )}
             </div>
 

@@ -57,7 +57,7 @@ export function DashboardOverview() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'challenge_settings' }, debouncedFetch)
       .subscribe();
 
-    const interval = setInterval(fetchStats, 30000); 
+    const interval = setInterval(fetchStats, 120000); 
     return () => {
       supabase.removeChannel(channel);
       supabase.removeChannel(subChannel);
@@ -71,47 +71,30 @@ export function DashboardOverview() {
   const fetchStats = async () => {
     // 1. Fetch Day Settings
     const { data: settings } = await supabase.from('challenge_settings').select('start_date').eq('id', 1).single();
-    let currentDay = 1; // Default fallback
+    let currentDay = 1;
     if (settings) {
       const start = new Date(settings.start_date);
       const now = new Date();
-      
       const startDateOnly = new Date(start.getFullYear(), start.getMonth(), start.getDate());
       const nowDateOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      
       const diffTime = nowDateOnly.getTime() - startDateOnly.getTime();
       currentDay = Math.max(1, Math.min(21, Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1));
     }
 
-    // 2. Fetch Profiles & Points Truth
-    const { data: profiles } = await supabase.from('profiles').select('*');
-    const { data: subs } = await supabase.from('submissions').select('user_id, tasks(points), flashcards(points)').eq('status', 'approved');
-    const { data: awards } = await supabase.from('manual_awards').select('user_id, points');
+    // 2. Fetch Profiles (Source of Truth for Leaderboard)
+    const { data: profiles } = await supabase.from('profiles').select('*').order('points', { ascending: false });
+    const profilesWithPoints = profiles || [];
 
-    const pointMap: { [key: string]: number } = {};
-    (subs || []).forEach(s => {
-        const pts = (s.tasks as any)?.points || (s.flashcards as any)?.points || 0;
-        pointMap[s.user_id] = (pointMap[s.user_id] || 0) + pts;
-    });
-    (awards || []).forEach(a => {
-        pointMap[a.user_id] = (pointMap[a.user_id] || 0) + (a.points || 0);
-    });
+    // 3. Active & Pending (Only fetch what we need)
+    const { data: submissions } = await supabase.from('submissions').select('status').eq('status', 'under-review');
+    const pendingCount = submissions?.length || 0;
 
-    const profilesWithPoints = (profiles || []).map(p => ({
-        ...p,
-        points: pointMap[p.id] || 0
-    })).sort((a, b) => b.points - a.points);
-
-    // 3. Active & Pending
-    const { data: submissions } = await supabase
-      .from('submissions')
-      .select('status');
-
-    // 4. Daily Tasks
+    // 4. Daily Task Engagement
     const { data: tasks } = await supabase
       .from('tasks')
       .select('*, submissions(status)')
       .eq('day', currentDay); 
+
     const topClient = profilesWithPoints[0]?.name || 'None';
     
     // Calculate Top Team
@@ -120,13 +103,15 @@ export function DashboardOverview() {
         const team = p.team_name || 'Independent';
         teamPoints[team] = (teamPoints[team] || 0) + (p.points || 0);
     });
-    const topTeam = Object.keys(teamPoints).reduce((a, b) => teamPoints[a] > teamPoints[b] ? a : b, 'Independent');
+    const topTeam = Object.keys(teamPoints).length > 0 
+      ? Object.keys(teamPoints).reduce((a, b) => teamPoints[a] > teamPoints[b] ? a : b) 
+      : 'Independent';
 
     const engagement = tasks?.map(t => ({
         id: t.id,
         title: t.title,
         submissions: t.submissions?.length || 0,
-        total: profiles?.length || 1, 
+        total: profilesWithPoints.length || 1, 
         points: t.points,
         status: t.is_active ? 'active' : 'upcoming'
     })) || [];
@@ -136,8 +121,8 @@ export function DashboardOverview() {
       currentDay: currentDay,
       topTeam,
       topClient,
-      activeCount: profiles?.length || 0,
-      pendingCount: submissions?.filter(s => s.status === 'under-review').length || 0,
+      activeCount: profilesWithPoints.length || 0,
+      pendingCount: pendingCount,
       taskEngagement: engagement
     });
   };
