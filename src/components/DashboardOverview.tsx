@@ -81,11 +81,26 @@ export function DashboardOverview() {
       currentDay = Math.max(1, Math.min(21, Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1));
     }
 
-    // 2. Fetch Profiles (Source of Truth for Leaderboard)
-    const { data: profiles } = await supabase.from('profiles').select('*').order('points', { ascending: false });
-    const profilesWithPoints = profiles || [];
+    // 2. Fetch Profiles & Points (same calculation as client dashboard)
+    const { data: profiles } = await supabase.from('profiles').select('*');
+    const { data: subs } = await supabase.from('submissions').select('user_id, tasks(points), flashcards(points)').eq('status', 'approved');
+    const { data: awards } = await supabase.from('manual_awards').select('user_id, points');
 
-    // 3. Active & Pending (Only fetch what we need)
+    const pointMap: { [key: string]: number } = {};
+    (subs || []).forEach(s => {
+        const pts = (s.tasks as any)?.points || (s.flashcards as any)?.points || 0;
+        pointMap[s.user_id] = (pointMap[s.user_id] || 0) + pts;
+    });
+    (awards || []).forEach(a => {
+        pointMap[a.user_id] = (pointMap[a.user_id] || 0) + (a.points || 0);
+    });
+
+    const profilesWithPoints = (profiles || []).map(p => ({
+        ...p,
+        points: pointMap[p.id] || 0
+    })).sort((a, b) => b.points - a.points);
+
+    // 3. Pending count only
     const { data: submissions } = await supabase.from('submissions').select('status').eq('status', 'under-review');
     const pendingCount = submissions?.length || 0;
 
