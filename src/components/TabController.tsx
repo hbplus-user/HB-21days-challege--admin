@@ -86,18 +86,10 @@ function ApprovalsQueue() {
                 .maybeSingle();
 
             if (existingLedger) {
-                // Points already credited for this submission — skip to avoid double-count
                 console.warn(`[Approval Guard] Points already awarded for submission ${subId}. Skipping.`);
-                alert('⚠️ Note: Points for this submission were already recorded. No duplicate credit applied.');
             } else {
-                // 1. Fetch current profile total
-                const { data: profile, error: fetchErr } = await supabase.from('profiles').select('points').eq('id', userId).single();
-                if (fetchErr) throw new Error(`Could not fetch profile: ${fetchErr.message}`);
-
-                // 2. Update Profile Total (only if not already credited)
-                await supabase.from('profiles').update({ points: (profile.points || 0) + pts }).eq('id', userId);
-
-                // 3. CAPTURE IN LEDGER (For backend audit)
+                // profiles.points is updated automatically by the DB trigger on submission UPDATE.
+                // Only write to the ledger for audit trail.
                 const { error: ledgerErr } = await supabase.from('point_ledger').insert({
                     user_id: userId,
                     points: pts,
@@ -109,10 +101,6 @@ function ApprovalsQueue() {
                 });
                 if (ledgerErr) {
                     console.error('Ledger Error:', ledgerErr);
-                    alert(`Ledger Audit Failed: ${ledgerErr.message}`);
-                } else {
-                    console.log('Ledger entry created successfully');
-                    alert('Success: Ledger Entry Recorded!');
                 }
             }
         }
