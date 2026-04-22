@@ -43,25 +43,10 @@ export function MemberManagement() {
 
   const fetchMembers = async () => {
     try {
+        // Use profiles.points directly — kept accurate by DB trigger
         const { data: profiles } = await supabase.from('profiles').select('*').order('name');
-        const { data: subs } = await supabase.from('submissions')
-            .select('user_id, tasks(points), flashcards(points)')
-            .eq('status', 'approved');
-        const { data: awards } = await supabase.from('manual_awards').select('user_id, points');
-
         if (profiles) {
-            const pointMap: { [key: string]: number } = {};
-            (subs || []).forEach(s => {
-                const userId = s.user_id;
-                const pts = Number((s.tasks as any)?.points) || Number((s.flashcards as any)?.points) || 0;
-                pointMap[userId] = (Number(pointMap[userId]) || 0) + pts;
-            });
-            (awards || []).forEach(a => {
-                const userId = a.user_id;
-                pointMap[userId] = (Number(pointMap[userId]) || 0) + (Number(a.points) || 0);
-            });
-            const syncedMembers = profiles.map(p => ({ ...p, points: pointMap[p.id] || 0 }));
-            setMembers(syncedMembers);
+            setMembers(profiles);
         }
     } catch (err) {
         console.error("Fetch error:", err);

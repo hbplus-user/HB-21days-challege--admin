@@ -12,11 +12,23 @@ export function AuditLogOverlay({ isOpen, onClose }: { isOpen: boolean; onClose:
   const [logLimit, setLogLimit] = useState(20);
 
   useEffect(() => {
-    if (isOpen) {
-      setIsShowingHistory(false);
-      setLogLimit(20);
-      fetchLogs('today');
-    }
+    if (!isOpen) return;
+
+    setIsShowingHistory(false);
+    setLogLimit(20);
+    fetchLogs('today');
+
+    // Auto-refresh log when submissions change while overlay is open
+    const channel = supabase.channel('audit-log-live')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'submissions' }, () => {
+        fetchLogs('today');
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'manual_awards' }, () => {
+        fetchLogs('today');
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
   }, [isOpen]);
 
   const fetchLogs = async (mode: 'today' | 'history', limit = 20) => {
