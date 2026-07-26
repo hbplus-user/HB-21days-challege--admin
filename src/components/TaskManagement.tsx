@@ -3,7 +3,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Trash2, Calendar, Check, GripVertical, Award, MessageSquareQuote, FileVideo, FileImage, FileText, LayoutList, Clock, Video, Zap, Camera } from "lucide-react";
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
+import { getAllEntities, TABLES, upsertEntity } from "@/lib/azureDb";
 import imageCompression from 'browser-image-compression';
 
 const protocolTemplates = [
@@ -61,41 +61,27 @@ export function TaskManagement() {
     fetchData();
     
     // Real-time synchronization
-    const tasksChannel = supabase.channel('tm-tasks').on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, fetchData).subscribe();
-    const flashcardsChannel = supabase.channel('tm-flash').on('postgres_changes', { event: '*', schema: 'public', table: 'flashcards' }, fetchData).subscribe();
-    const interval = setInterval(fetchData, 20000); // 20s safety backup
+    fetchData();
+    const interval = setInterval(fetchData, 30000); // 30s safety backup
     return () => {
-        supabase.removeChannel(tasksChannel);
-        supabase.removeChannel(flashcardsChannel);
         clearInterval(interval);
     };
   }, []);
 
   const fetchData = async () => {
-    // 1. Fetch Day Settings to sync with current progress
-    const { data: settings } = await supabase.from('challenge_settings').select('start_date').eq('id', 1).single();
-    if (settings) {
-      const start = new Date(settings.start_date);
-      const now = new Date();
-      
-      const startDateOnly = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-      const nowDateOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      
-      const diffTime = nowDateOnly.getTime() - startDateOnly.getTime();
-      const currentDay = Math.max(1, Math.min(21, Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1));
-      
-      setActiveDay(currentDay);
-      setActiveWeek(Math.ceil(currentDay / 7));
-    }
+    try {
+      const allTasks = await getAllEntities(TABLES.TASKS);
+      const allCards = await getAllEntities(TABLES.FLASHCARDS);
+      const allProfiles = await getAllEntities(TABLES.PROFILES);
 
-    const { data: tasksData } = await supabase.from('tasks').select('*');
-    const { data: cardsData } = await supabase.from('flashcards').select('*').order('created_at', { ascending: false });
-    const { data: membersData } = await supabase.from('profiles').select('id, name').order('name');
-    
-    if (tasksData) setTasks(tasksData);
-    if (cardsData) setFlashCards(cardsData);
-    if (membersData) setMembers(membersData);
-    setIsLoading(false);
+      setTasks(allTasks.map(t => ({ ...t, id: t.rowKey })));
+      setFlashCards(allCards.map(c => ({ ...c, id: c.rowKey })));
+      setMembers(allProfiles.map(p => ({ ...p, id: p.rowKey })));
+    } catch (err) {
+      console.error("Fetch error:", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   // ---- File Validation Constants ----
@@ -186,29 +172,7 @@ export function TaskManagement() {
   };
 
   const handleResetChallenge = async () => {
-    if (!confirm("Are you sure? This will reset the challenge to Day 1, clear all leaderboard points, and remove all current submissions!")) return;
-    
-    try {
-        // 1. Reset Challenge Start Date
-        const { error: sE } = await supabase.from('challenge_settings').update({ 
-            start_date: new Date().toISOString() 
-        }).eq('id', 1);
-        if (sE) throw sE;
-
-        // 2. Clear Points for all non-admin users
-        const { error: pE } = await supabase.from('profiles').update({ points: 0 }).neq('id', '00000000-0000-0000-0000-000000000000'); // Valid UUID string
-        if (pE) throw pE;
-
-        // 3. Clear Submissions (Delete everything)
-        const { error: subE } = await supabase.from('submissions').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        if (subE) throw subE;
-
-        alert("Challenge Reset Successful! Batch started at Day 1.");
-        window.location.reload();
-    } catch (e: any) {
-        console.error("Reset Error:", e);
-        alert(`Failed to reset: ${e.message || 'Unknown database error'}`);
-    }
+    alert("Reset functionality needs implementation for Azure.");
   };
 
   const filteredTasks = tasks.filter(t => t.day === activeDay);
@@ -226,7 +190,9 @@ export function TaskManagement() {
     }
 
     try {
-        const { error } = await supabase.from('flashcards').insert([{ 
+        await upsertEntity(TABLES.FLASHCARDS, { 
+            partitionKey: "Flashcard",
+            rowKey: Date.now().toString(),
             text: newCardData.text, 
             description: newCardData.description,
             points: newCardData.points, 
@@ -234,20 +200,17 @@ export function TaskManagement() {
             proof_mode: newCardData.proof_mode || 'both',
             type: "challenge",
             deadline: new Date(cardDeadline).toISOString(),
-            target_user_id: targetClientId
-        }]);
+            target_user_id: targetClientId,
+            created_at: new Date().toISOString()
+        });
         
-        if (error) {
-            console.error('Broadcast Error:', error);
-            alert(`Broadcast failed: ${error.message}`);
-            return;
-        }
-
         setNewCardData({ text: '', description: '', points: 50, video_url: null, proof_mode: 'both' }); 
         setCardFile(null);
         setIsAddingCard(false); 
-    } catch(e) {
+        fetchData();
+    } catch(e: any) {
         console.error('System error during broadcast:', e);
+        alert(`Broadcast failed: ${e.message}`);
     }
   };
 
@@ -263,8 +226,10 @@ export function TaskManagement() {
         videoUrl = null;
     }
 
-    const { error } = await supabase.from('tasks').insert([
-      { 
+    try {
+      await upsertEntity(TABLES.TASKS, {
+        partitionKey: "Task",
+        rowKey: Date.now().toString(),
         title: newTaskData.title, 
         description: newTaskData.description,
         points: newTaskData.points, 
@@ -272,27 +237,25 @@ export function TaskManagement() {
         proof_type: newTaskData.proof_type || 'image', 
         proof_mode: newTaskData.proof_mode || 'both',
         week: activeWeek,
-        day: activeDay 
-      }
-    ]);
+        day: activeDay,
+        created_at: new Date().toISOString()
+      });
 
-    if (!error) {
       setNewTaskData({ title: '', description: '', points: 15, video_url: null, proof_type: 'image', proof_mode: 'both' });
       setTaskFile(null);
       setIsAddingTask(false);
-    } else {
+      fetchData();
+    } catch (error: any) {
         alert(`Failed to save task: ${error.message}`);
     }
   };
 
   const deleteFlashCard = async (id: string) => {
-    if (!confirm("Are you sure? This will remove this broadcast and all client interest data for it!")) return;
-    await supabase.from('flashcards').delete().eq('id', id);
+    alert("Delete functionality needs implementation for Azure.");
   };
 
   const deleteTask = async (id: string) => {
-    if (!confirm("Are you sure? This will remove this protocol and ALL client submissions for it!")) return;
-    await supabase.from('tasks').delete().eq('id', id);
+    alert("Delete functionality needs implementation for Azure.");
   };
 
   const toggleTaskSelection = (id: string) => {
@@ -302,38 +265,7 @@ export function TaskManagement() {
   };
 
   const handleBatchAction = async () => {
-    if (selectedTaskIds.length === 0) return;
-    
-    const targetWeek = Math.ceil(targetDay / 7);
-    const selectedTasks = tasks.filter(t => selectedTaskIds.includes(t.id));
-    
-    try {
-      if (batchActionType === 'copy') {
-        const tasksToInsert = selectedTasks.map(t => ({
-          title: t.title,
-          points: t.points,
-          video_url: t.video_url,
-          proof_type: t.proof_type,
-          day: targetDay,
-          week: targetWeek
-        }));
-        const { error } = await supabase.from('tasks').insert(tasksToInsert);
-        if (error) throw error;
-        alert(`Successfully copied ${selectedTaskIds.length} tasks to Day ${targetDay}`);
-      } else {
-        const { error } = await supabase.from('tasks')
-          .update({ day: targetDay, week: targetWeek })
-          .in('id', selectedTaskIds);
-        if (error) throw error;
-        alert(`Successfully moved ${selectedTaskIds.length} tasks to Day ${targetDay}`);
-      }
-      
-      setSelectedTaskIds([]);
-      setIsBatchActionModalOpen(false);
-      fetchData();
-    } catch (e: any) {
-      alert(`Batch action failed: ${e.message}`);
-    }
+    alert("Batch actions need specific implementation for Azure Table Storage.");
   };
 
   const handleDirectAward = async () => {
@@ -355,29 +287,25 @@ export function TaskManagement() {
     }
 
     try {
-        // profiles.points is updated automatically by the DB trigger on manual_awards INSERT.
-        // 1. Log award (trigger will recalculate profiles.points from this insert)
-        const { data: mAward, error: mErr } = await supabase.from('manual_awards').insert({
+        await upsertEntity(TABLES.MANUAL_AWARDS, {
+            partitionKey: "Award",
+            rowKey: Date.now().toString(),
             user_id: awardData.userId,
             points: Number(awardData.points),
             reason: awardData.reason || 'Admin Award',
-            day: activeDay,
-            week: activeWeek
-        }).select().single();
-        
-        if (mErr) throw new Error(`Award failed: ${mErr.message}`);
-
-        // 2. Update Central Ledger (audit trail only)
-        const { error: ledgerErr } = await supabase.from('point_ledger').insert({
-            user_id: awardData.userId,
-            points: Number(awardData.points),
-            source_type: 'manual_award',
-            source_id: mAward?.id?.toString() || 'manual',
-            reason: awardData.reason || 'Admin Award',
-            day: activeDay,
-            week: activeWeek
+            created_at: new Date().toISOString()
         });
-        if (ledgerErr) console.error('Ledger Error:', ledgerErr);
+
+        // Update profile points
+        const profile = members.find(m => m.id === awardData.userId);
+        if (profile) {
+          await upsertEntity(TABLES.PROFILES, {
+            ...profile,
+            partitionKey: "Profile",
+            rowKey: awardData.userId,
+            points: (Number(profile.points) || 0) + Number(awardData.points)
+          });
+        }
 
         alert(`Successfully awarded ${awardData.points} points!`);
         setIsAwardingPoints(false);
@@ -505,18 +433,21 @@ export function TaskManagement() {
 
                     if (!msg.trim()) return;
                     
-                    const { error } = await supabase.from('flashcards').insert([{ 
-                        text: msg, 
-                        type: 'alert', 
-                        points: 0,
-                        deadline: new Date(Date.now() + totalMins * 60000).toISOString()
-                    }]);
-                    
-                    if (!error) {
+                    try {
+                        await upsertEntity(TABLES.FLASHCARDS, { 
+                            partitionKey: "Flashcard",
+                            rowKey: Date.now().toString(),
+                            text: msg, 
+                            type: 'alert', 
+                            points: 0,
+                            deadline: new Date(Date.now() + totalMins * 60000).toISOString(),
+                            created_at: new Date().toISOString()
+                        });
                         (document.getElementById('system-broadcast-msg') as HTMLTextAreaElement).value = '';
                         alert(`Signal transmitted! Active for ${val} ${unit === 1 ? 'minutes' : 'hours'}.`);
-                    } else {
-                        alert(`Broadcast error: ${error.message}`);
+                        fetchData();
+                    } catch (e: any) {
+                        alert(`Broadcast error: ${e.message}`);
                     }
                 }}
                 style={{ 

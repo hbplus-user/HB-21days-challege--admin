@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { Check, Clock, Users, Trophy, Award, Calendar, CheckCircle2 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { getAllEntities, TABLES } from "@/lib/azureDb";
 
 function AnimatedNumber({ value }: { value: number | string }) {
   const [displayValue, setDisplayValue] = useState(0);
@@ -42,89 +42,56 @@ export function DashboardOverview() {
   });
 
   useEffect(() => {
-    let timeout: NodeJS.Timeout;
-    const debouncedFetch = () => {
-        clearTimeout(timeout);
-        timeout = setTimeout(fetchStats, 1500);
-    };
-
     fetchStats();
-    
-    const subChannel = supabase.channel('dashboard-results').on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, debouncedFetch).subscribe();
-    const profChannel = supabase.channel('dashboard-profiles').on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, debouncedFetch).subscribe();
-    const awardChannel = supabase.channel('dashboard-awards').on('postgres_changes', { event: '*', schema: 'public', table: 'manual_awards' }, debouncedFetch).subscribe();
-    const channel = supabase.channel('dashboard-settings')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'challenge_settings' }, debouncedFetch)
-      .subscribe();
-
-    const interval = setInterval(fetchStats, 120000); 
+    const interval = setInterval(fetchStats, 60000); // 1 minute polling
     return () => {
-      supabase.removeChannel(channel);
-      supabase.removeChannel(subChannel);
-      supabase.removeChannel(profChannel);
-      supabase.removeChannel(awardChannel);
       clearInterval(interval);
-      clearTimeout(timeout);
     };
   }, []);
 
   const fetchStats = async () => {
-    // 1. Fetch Day Settings
-    const { data: settings } = await supabase.from('challenge_settings').select('start_date').eq('id', 1).single();
-    let currentDay = 1;
-    if (settings) {
-      const start = new Date(settings.start_date);
-      const now = new Date();
-      const startDateOnly = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-      const nowDateOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const diffTime = nowDateOnly.getTime() - startDateOnly.getTime();
-      currentDay = Math.max(1, Math.min(21, Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1));
+    try {
+      const allProfiles = await getAllEntities(TABLES.PROFILES);
+      const allSubs = await getAllEntities(TABLES.SUBMISSIONS);
+      const allTasks = await getAllEntities(TABLES.TASKS);
+
+      let currentDay = 1;
+      // Mock day calculation for now as challenge_settings table might not be fully migrated or needed
+      const profilesWithPoints = (allProfiles || []).sort((a, b) => (Number(b.points) || 0) - (Number(a.points) || 0));
+      const pendingCount = allSubs.filter(s => s.status === 'under-review').length;
+
+      const topClient = (profilesWithPoints[0]?.name as string) || 'None';
+      
+      const teamPoints: any = {};
+      allProfiles.forEach((p: any) => {
+          const team = p.team_name || 'Independent';
+          teamPoints[team] = (teamPoints[team] || 0) + (Number(p.points) || 0);
+      });
+      const topTeam = Object.keys(teamPoints).length > 0 
+        ? Object.keys(teamPoints).reduce((a, b) => (teamPoints[a] as number) > (teamPoints[b] as number) ? a : b) 
+        : 'Independent';
+
+      const engagement = allTasks.filter(t => t.day === currentDay).map(t => ({
+          id: t.rowKey,
+          title: t.title,
+          submissions: allSubs.filter(s => s.task_id === t.rowKey).length,
+          total: profilesWithPoints.length || 1, 
+          points: t.points,
+          status: 'active'
+      }));
+
+      setStats({
+        activeChallenge: 1,
+        currentDay: currentDay,
+        topTeam,
+        topClient,
+        activeCount: profilesWithPoints.length || 0,
+        pendingCount: pendingCount,
+        taskEngagement: engagement
+      });
+    } catch (err) {
+      console.error("Fetch error:", err);
     }
-
-    // 2. Fetch Profiles — use profiles.points directly (kept accurate by DB trigger)
-    const { data: profiles } = await supabase.from('profiles').select('*');
-    const profilesWithPoints = (profiles || []).sort((a, b) => (b.points || 0) - (a.points || 0));
-
-    // 3. Pending count only
-    const { data: submissions } = await supabase.from('submissions').select('status').eq('status', 'under-review');
-    const pendingCount = submissions?.length || 0;
-
-    // 4. Daily Task Engagement
-    const { data: tasks } = await supabase
-      .from('tasks')
-      .select('*, submissions(status)')
-      .eq('day', currentDay); 
-
-    const topClient = profilesWithPoints[0]?.name || 'None';
-    
-    // Calculate Top Team
-    const teamPoints: any = {};
-    profilesWithPoints.forEach(p => {
-        const team = p.team_name || 'Independent';
-        teamPoints[team] = (teamPoints[team] || 0) + (p.points || 0);
-    });
-    const topTeam = Object.keys(teamPoints).length > 0 
-      ? Object.keys(teamPoints).reduce((a, b) => teamPoints[a] > teamPoints[b] ? a : b) 
-      : 'Independent';
-
-    const engagement = tasks?.map(t => ({
-        id: t.id,
-        title: t.title,
-        submissions: t.submissions?.length || 0,
-        total: profilesWithPoints.length || 1, 
-        points: t.points,
-        status: t.is_active ? 'active' : 'upcoming'
-    })) || [];
-
-    setStats({
-      activeChallenge: currentDay,
-      currentDay: currentDay,
-      topTeam,
-      topClient,
-      activeCount: profilesWithPoints.length || 0,
-      pendingCount: pendingCount,
-      taskEngagement: engagement
-    });
   };
 
   const currentWeek = Math.ceil(stats.currentDay / 7);

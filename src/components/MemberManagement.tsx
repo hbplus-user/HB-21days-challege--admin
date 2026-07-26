@@ -3,7 +3,8 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { UserCheck, UserX, Search, ShieldCheck, Mail, ShieldAlert, Trash2, Edit2, Check, X, Camera, UploadCloud, Award, FileText, Clock, History } from "lucide-react";
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
+import { getAllEntities, TABLES, upsertEntity } from "@/lib/azureDb";
+import { uploadToAzure } from "@/lib/azureClient";
 
 export function MemberManagement() {
   const [members, setMembers] = useState<any[]>([]);
@@ -20,34 +21,17 @@ export function MemberManagement() {
 
   // Debounced fetch to prevent flooding
   useEffect(() => {
-    let timeout: NodeJS.Timeout;
-    const debouncedFetch = () => {
-        clearTimeout(timeout);
-        timeout = setTimeout(fetchMembers, 1000);
-    };
-
     fetchMembers();
-    const sub = supabase.channel('member-updates')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, debouncedFetch)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, debouncedFetch)
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'manual_awards' }, debouncedFetch)
-        .subscribe();
-    
-    const interval = setInterval(fetchMembers, 120000); // 2 minutes
+    const interval = setInterval(fetchMembers, 30000); // 30s polling
     return () => { 
-        supabase.removeChannel(sub); 
         clearInterval(interval);
-        clearTimeout(timeout);
     };
   }, []);
 
   const fetchMembers = async () => {
     try {
-        // Use profiles.points directly — kept accurate by DB trigger
-        const { data: profiles } = await supabase.from('profiles').select('*').order('name');
-        if (profiles) {
-            setMembers(profiles);
-        }
+        const profiles = await getAllEntities(TABLES.PROFILES);
+        setMembers(profiles.map(p => ({ ...p, id: p.rowKey })));
     } catch (err) {
         console.error("Fetch error:", err);
     } finally {
@@ -64,36 +48,26 @@ export function MemberManagement() {
     }
 
     try {
-        const startOfToday = new Date();
-        startOfToday.setHours(0,0,0,0);
-        const isoToday = startOfToday.toISOString();
+        const allSubs = await getAllEntities(TABLES.SUBMISSIONS);
+        const allAwards = await getAllEntities(TABLES.MANUAL_AWARDS);
+        const allTasks = await getAllEntities(TABLES.TASKS);
+        const allFlashcards = await getAllEntities(TABLES.FLASHCARDS);
 
-        let subQuery = supabase.from('submissions').select('*, tasks(title, points), flashcards(text, points)').eq('user_id', member.id).order('created_at', { ascending: false });
-        let awardQuery = supabase.from('manual_awards').select('*').eq('user_id', member.id).order('created_at', { ascending: false });
+        const memberSubs = allSubs.filter(s => s.user_id === member.id);
+        const memberAwards = allAwards.filter(a => a.user_id === member.id);
 
-        if (mode === 'today') {
-            subQuery = subQuery.gte('created_at', isoToday);
-            awardQuery = awardQuery.gte('created_at', isoToday);
-        } else {
-            subQuery = subQuery.lt('created_at', isoToday).range(0, limit - 1);
-            awardQuery = awardQuery.lt('created_at', isoToday).limit(10);
-        }
+        const enrichedSubs = memberSubs.map(s => {
+          const task = allTasks.find(t => t.rowKey === s.task_id);
+          const flashcard = allFlashcards.find(f => f.rowKey === s.flashcard_id);
+          return { ...s, logType: 'submission', tasks: task, flashcards: flashcard };
+        });
 
-        const [subsRes, awardsRes] = await Promise.all([subQuery, awardQuery]);
-        
         const combined = [
-            ...(subsRes.data || []).map(s => ({ ...s, logType: 'submission' })),
-            ...(awardsRes.data || []).map(a => ({ ...a, logType: 'award' }))
-        ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+            ...enrichedSubs,
+            ...memberAwards.map(a => ({ ...a, logType: 'award' }))
+        ].sort((a, b) => new Date((b as any).created_at || (b as any).timestamp).getTime() - new Date((a as any).created_at || (a as any).timestamp).getTime());
 
-        if (mode === 'today') {
-            setMemberHistory(combined);
-        } else {
-            setMemberHistory(prev => {
-                const todayOnly = prev.filter(l => new Date(l.created_at) >= startOfToday);
-                return [...todayOnly, ...combined];
-            });
-        }
+        setMemberHistory(combined);
     } catch (e) {
         console.error("History fetch error:", e);
     } finally {
@@ -113,24 +87,15 @@ export function MemberManagement() {
   };
 
   const toggleAccess = async (id: string, currentStatus: boolean) => {
-    const { error } = await supabase.from('profiles').update({ is_allowed: !currentStatus }).eq('id', id);
-    if (!error) fetchMembers();
+    const member = members.find(m => m.id === id);
+    if (member) {
+      await upsertEntity(TABLES.PROFILES, { ...member, partitionKey: "Profile", rowKey: id, is_allowed: !currentStatus });
+      fetchMembers();
+    }
   };
 
   const deleteMember = async (id: string, name: string) => {
-    if (!confirm(`Are you absolutely sure you want to PERMANENTLY DELETE ${name}? This will remove their Account, Submissions, Manual Awards, and all progress.`)) return;
-    
-    // Call the "Super Function" we just created in SQL
-    // This will delete them from Auth, which then cascades to everything else.
-    const { error } = await supabase.rpc('admin_delete_user', { target_user_id: id });
-
-    if (!error) {
-        alert("Operation Successful: User and all associated data have been permanently erased.");
-        fetchMembers();
-    } else {
-        console.error("Delete error:", error);
-        alert(`Error: ${error.message}. Make sure you have run the SQL script for 'admin_delete_user' in Supabase.`);
-    }
+    alert("Delete functionality needs specific implementation for Azure Table Storage (Row Deletion).");
   };
 
   const startEditing = (member: any) => {
@@ -152,26 +117,25 @@ export function MemberManagement() {
         return;
     }
 
-    const dayString = prompt("Which Day should this adjustment apply to? (1-28):", "1");
-    if (!dayString) return;
-    const day = parseInt(dayString);
-
     try {
-        // 1. Update Profile (Source of Truth for Overall)
-        const { error: pErr } = await supabase.from('profiles').update({ 
-            points: (Number(currentPoints) || 0) + adjustment 
-        }).eq('id', memberId);
-        if (pErr) throw pErr;
-
-        // 2. Insert Manual Award (Source of Truth for Daily/Weekly history)
-        const { error: aErr } = await supabase.from('manual_awards').insert({
+        const member = members.find(m => m.id === memberId);
+        if (member) {
+          await upsertEntity(TABLES.PROFILES, {
+            ...member,
+            partitionKey: "Profile",
+            rowKey: memberId,
+            points: (Number(currentPoints) || 0) + adjustment
+          });
+          
+          await upsertEntity(TABLES.MANUAL_AWARDS, {
+            partitionKey: "Award",
+            rowKey: Date.now().toString(),
             user_id: memberId,
             points: adjustment,
             reason: "Admin Adjustment",
-            day: day,
-            week: Math.ceil(day / 7)
-        });
-        if (aErr) throw aErr;
+            created_at: new Date().toISOString()
+          });
+        }
 
         alert(`Successfully adjusted points by ${adjustment}`);
         fetchMembers();
@@ -182,34 +146,23 @@ export function MemberManagement() {
 
   const saveEdit = async () => {
     if (!editingId) return;
-    const { error } = await supabase.from('profiles').update({
+    const member = members.find(m => m.id === editingId);
+    if (member) {
+      await upsertEntity(TABLES.PROFILES, {
+        ...member,
+        partitionKey: "Profile",
+        rowKey: editingId,
         name: editFormData.name,
         email: editFormData.email,
         avatar_url: editFormData.avatar_url
-    }).eq('id', editingId);
-
-    if (!error) {
-        setEditingId(null);
-        fetchMembers();
-    } else {
-        alert(`Failed to update: ${error.message}`);
+      });
+      setEditingId(null);
+      fetchMembers();
     }
   };
 
   const makeCaptain = async (member: any) => {
-    if (!member.team_name || member.team_name === 'Independent') {
-        alert("Member must be in a team to become a captain.");
-        return;
-    }
-    
-    // First, remove captain role from everyone else in this team
-    await supabase.from('profiles').update({ role: 'member' }).eq('team_name', member.team_name);
-    // Then set this user as captain
-    const { error } = await supabase.from('profiles').update({ role: 'captain' }).eq('id', member.id);
-    if (!error) {
-        alert(`${member.name} is now the Captain of ${member.team_name}`);
-        fetchMembers();
-    }
+    alert("Captain promotion functionality needs implementation for Azure.");
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -218,21 +171,8 @@ export function MemberManagement() {
 
     setIsUploading(true);
     try {
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${editingId}-${Date.now()}.${fileExt}`;
-        const filePath = `avatars/${fileName}`;
-
-        // 1. Upload to Supabase Storage (Using the new 'avatars' bucket)
-        const { error: uploadError } = await supabase.storage
-            .from('avatars')
-            .upload(filePath, file);
-
-        if (uploadError) throw uploadError;
-
-        // 2. Get Public URL
-        const { data: { publicUrl } } = supabase.storage
-            .from('avatars')
-            .getPublicUrl(filePath);
+        // --- Migration to Azure Blob Storage ---
+        const publicUrl = await uploadToAzure(file, 'avatars');
 
         setEditFormData(prev => ({ ...prev, avatar_url: publicUrl }));
         alert("Photo Uploaded Successfully! Click the checkmark to save change.");

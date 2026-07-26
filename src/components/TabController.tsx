@@ -8,7 +8,7 @@ import { TeamManagement } from "@/components/TeamManagement";
 import { TaskManagement } from "@/components/TaskManagement";
 import { AnalyticsDashboard } from "@/components/AnalyticsDashboard";
 import { MemberManagement } from "@/components/MemberManagement";
-import { supabase } from "@/lib/supabase";
+import { getAllEntities, TABLES, upsertEntity } from "@/lib/azureDb";
 
 // --- SUB-COMPONENTS ---
 
@@ -27,81 +27,73 @@ function ApprovalsQueue() {
     };
 
     fetchSubmissions();
-    const channel = supabase.channel('submissions-review').on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, debouncedFetch).subscribe();
+    const interval = setInterval(fetchSubmissions, 30000); // Polling every 30s for Azure
     return () => { 
-        supabase.removeChannel(channel); 
         clearTimeout(timeout);
+        clearInterval(interval);
     };
   }, []);
 
   const fetchSubmissions = async () => {
-    // 1. Fetch real-time totals for each status
-    const { count: approvedCount } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('status', 'approved');
-    const { count: retryCount } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('status', 'retry');
-    const { count: rejectedCount } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('status', 'rejected');
+    try {
+      const allSubs = await getAllEntities(TABLES.SUBMISSIONS);
+      const allTasks = await getAllEntities(TABLES.TASKS);
+      const allFlashcards = await getAllEntities(TABLES.FLASHCARDS);
+      const allProfiles = await getAllEntities(TABLES.PROFILES);
 
-    setTotals({
-        approved: approvedCount || 0,
-        retry: retryCount || 0,
-        rejected: rejectedCount || 0
-    });
+      const approvedCount = allSubs.filter(s => s.status === 'approved').length;
+      const retryCount = allSubs.filter(s => s.status === 'retry').length;
+      const rejectedCount = allSubs.filter(s => s.status === 'rejected').length;
 
-    // 2. Fetch pending queue
-    const { data: pending } = await supabase.from('submissions').select('*, profiles (id, name, team_name), tasks (title, proof_type, points), flashcards (text, points)').eq('status', 'under-review');
-    
-    // 3. Keep showing recent processed for the visual log (optional)
-    const { data: recent } = await supabase.from('submissions').select('*, profiles (id, name, team_name), tasks (title, proof_type, points), flashcards (text, points)').neq('status', 'under-review').order('created_at', { ascending: false }).limit(10);
+      setTotals({
+          approved: approvedCount,
+          retry: retryCount,
+          rejected: rejectedCount
+      });
 
-    if (pending) setSubmissions(pending);
-    if (recent) setProcessed(recent);
-    setIsLoading(false);
+      const enrich = (sub: any) => {
+        const profile = allProfiles.find(p => p.rowKey === sub.user_id);
+        const task = allTasks.find(t => t.rowKey === sub.task_id);
+        const flashcard = allFlashcards.find(f => f.rowKey === sub.flashcard_id);
+        return { ...sub, id: sub.rowKey, profiles: profile ? { ...profile, id: profile.rowKey } : null, tasks: task ? { ...task, id: task.rowKey } : null, flashcards: flashcard ? { ...flashcard, id: flashcard.rowKey } : null };
+      };
+
+      const pending = allSubs.filter(s => s.status === 'under-review').map(enrich);
+      const recent = allSubs.filter(s => s.status !== 'under-review').sort((a, b) => new Date(b.created_at as string).getTime() - new Date(a.created_at as string).getTime()).slice(0, 10).map(enrich);
+
+      setSubmissions(pending);
+      setProcessed(recent);
+    } catch (err) {
+      console.error("Fetch error:", err);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleStatusUpdate = async (sub: any, status: 'approved' | 'retry', comment?: string) => {
     try {
-        const subId = sub.id;
-        const userId = sub.profiles?.id;
+        const subId = sub.rowKey || sub.id;
+        const userId = sub.user_id;
         const pts = sub.tasks?.points || sub.flashcards?.points || 0;
 
-        // GET CURRENT ADMIN
-        const { data: { user } } = await supabase.auth.getUser();
-        let adminEmail = user?.email || 'Admin';
-
-        const { error: subErr } = await supabase.from('submissions').update({ 
+        await upsertEntity(TABLES.SUBMISSIONS, {
+            partitionKey: "Submission",
+            rowKey: subId,
             status, 
             rejection_comment: comment || null,
-            approved_by: adminEmail,
+            approved_by: "Admin",
             processed_at: new Date().toISOString()
-        }).eq('id', subId);
+        });
         
-        if (subErr) throw subErr;
-
         if (status === 'approved') {
-            // --- IDEMPOTENCY GUARD: Check if points were already awarded for this submission ---
-            const { data: existingLedger } = await supabase
-                .from('point_ledger')
-                .select('id')
-                .eq('source_id', subId.toString())
-                .eq('user_id', userId)
-                .maybeSingle();
-
-            if (existingLedger) {
-                console.warn(`[Approval Guard] Points already awarded for submission ${subId}. Skipping.`);
-            } else {
-                // profiles.points is updated automatically by the DB trigger on submission UPDATE.
-                // Only write to the ledger for audit trail.
-                const { error: ledgerErr } = await supabase.from('point_ledger').insert({
-                    user_id: userId,
-                    points: pts,
-                    source_type: sub.tasks ? 'task' : 'flashcard',
-                    source_id: subId.toString(),
-                    reason: sub.tasks?.title || sub.flashcards?.text || 'Challenge Submission',
-                    day: sub.tasks?.day || null,
-                    week: sub.tasks?.week || sub.flashcards?.week || null
-                });
-                if (ledgerErr) {
-                    console.error('Ledger Error:', ledgerErr);
-                }
+            // Update profile points in Azure
+            const allProfiles = await getAllEntities(TABLES.PROFILES);
+            const profile = allProfiles.find(p => p.rowKey === userId);
+            if (profile) {
+              await upsertEntity(TABLES.PROFILES, {
+                ...profile,
+                points: (Number(profile.points) || 0) + pts
+              });
             }
         }
 

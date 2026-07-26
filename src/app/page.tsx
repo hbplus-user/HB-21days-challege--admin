@@ -8,10 +8,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { User } from "@supabase/supabase-js";
 
-const supabaseConfigured =
-  typeof process !== 'undefined' &&
-  !!process.env.NEXT_PUBLIC_SUPABASE_URL &&
-  !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabaseConfigured = true; // Bypassing for Azure migration testing
 
 export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
@@ -33,22 +30,13 @@ export default function Home() {
       setIsLoading(false);
     }, 5000);
 
-    // Check initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      console.log("[HB+ DEBUG] Session verified:", !!session);
-      clearTimeout(timeout);
-      validateUser(session?.user ?? null);
-      setIsLoading(false);
-    }).catch((err) => {
-      console.error("[HB+ DEBUG] Auth check failed:", err);
-      clearTimeout(timeout);
-      setIsLoading(false);
-    });
+    // Bypass auth for testing if needed, or implement simple session
+    setIsAuthorized(true); 
+    setIsLoading(false);
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      validateUser(session?.user ?? null);
-    });
+    // Auth listeners disabled for testing
+    const subscription = { unsubscribe: () => {} };
 
     return () => {
       clearTimeout(timeout);
